@@ -180,7 +180,7 @@ impl Worker {
             // Get next queue (round-robin)
             let queue = self.next_queue();
 
-            match self.dequeue_task(&queue).await {
+            match self.dequeue_task_any(&queue).await {
                 Ok(Some(task)) => {
                     // Process task
                     let result = self.process_task(task).await;
@@ -252,6 +252,56 @@ impl Worker {
             }
             None => Ok(None),
         }
+    }
+
+    /// Dequeue a task from priority queue
+    ///
+    /// Priority queues use ZSet where lower score = higher priority
+    async fn dequeue_task_priority(&self, queue: &str) -> Result<Option<Task>> {
+        // Check if queue is paused
+        let pause_key: RedisKey = Keys::pause(queue).into();
+        if self.state.redis.exists(pause_key).await? {
+            return Err(Error::QueuePaused(queue.to_string()));
+        }
+
+        // Check if priority queue has tasks
+        let pqueue_key: RedisKey = Keys::priority_queue(queue).into();
+        let count = self.state.redis.zcard(pqueue_key.clone()).await?;
+
+        if count == 0 {
+            return Ok(None);
+        }
+
+        // Get task with highest priority (lowest score)
+        match self.state.redis.zrange(pqueue_key.clone(), 0, 0).await?.first() {
+            Some(task_id) => {
+                let task_id = task_id.clone(); // Clone before moving
+                // Remove from priority queue
+                self.state.redis.zrem(pqueue_key, task_id.as_str().into()).await?;
+
+                // Move to active queue
+                let active_key: RedisKey = Keys::active(queue).into();
+                self.state.redis.lpush(active_key, task_id.as_str().into()).await?;
+
+                // Load full task data
+                self.load_task(&task_id).await.map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Dequeue task - tries priority queue first, then regular queue
+    async fn dequeue_task_any(&self, queue: &str) -> Result<Option<Task>> {
+        // Try priority queue first
+        let pqueue_key: RedisKey = Keys::priority_queue(queue).into();
+        let has_priority = self.state.redis.zcard(pqueue_key).await? > 0;
+
+        if has_priority {
+            return self.dequeue_task_priority(queue).await;
+        }
+
+        // Fall back to regular queue
+        self.dequeue_task(queue).await
     }
 
     /// Load task data from Redis

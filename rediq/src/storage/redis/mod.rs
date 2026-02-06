@@ -150,6 +150,35 @@ impl RedisClient {
         Ok(())
     }
 
+    /// Sorted Set operation: get by index range (with scores)
+    pub async fn zrange_with_scores(&self, key: RedisKey, start: i64, stop: i64) -> Result<Vec<(String, f64)>> {
+        let result: Vec<RedisValue> = self
+            .pool
+            .zrange(key, start, stop, None, true, None, false)
+            .await?;
+        // Result comes as alternating member, score, member, score, ...
+        let mut output = Vec::new();
+        for chunk in result.chunks(2) {
+            if chunk.len() == 2 {
+                let member = chunk[0].as_string().map(|s| s.to_string());
+                let score = chunk[1].as_f64();
+                if let (Some(m), Some(s)) = (member, score) {
+                    output.push((m, s));
+                }
+            }
+        }
+        Ok(output)
+    }
+
+    /// Sorted Set operation: get by index range
+    pub async fn zrange(&self, key: RedisKey, start: i64, stop: i64) -> Result<Vec<String>> {
+        let result: Vec<RedisValue> = self
+            .pool
+            .zrange(key, start, stop, None, false, None, false)
+            .await?;
+        Ok(result.into_iter().filter_map(|v| v.as_string().map(|s| s.to_string())).collect())
+    }
+
     /// Sorted Set operation: get by score range
     pub async fn zrangebyscore(&self, key: RedisKey, min: i64, max: i64) -> Result<Vec<String>> {
         let result: Vec<RedisValue> = self
@@ -163,6 +192,12 @@ impl RedisClient {
     pub async fn zrem(&self, key: RedisKey, member: RedisValue) -> Result<bool> {
         let result: u64 = self.pool.zrem(key, member).await?;
         Ok(result > 0)
+    }
+
+    /// Sorted Set operation: get cardinality (number of elements)
+    pub async fn zcard(&self, key: RedisKey) -> Result<u64> {
+        let result: u64 = self.pool.zcard(key).await?;
+        Ok(result)
     }
 
     /// Set operation: add

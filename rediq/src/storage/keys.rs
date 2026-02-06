@@ -16,6 +16,13 @@ impl Keys {
         format!("{}:queue:{}", PREFIX, queue_name)
     }
 
+    /// Priority Queue Key (ZSet)
+    /// Uses score where lower value = higher priority
+    /// Example: rediq:pqueue:default
+    pub fn priority_queue(queue_name: &str) -> String {
+        format!("{}:pqueue:{}", PREFIX, queue_name)
+    }
+
     /// Active task queue Key (List)
     /// Example: rediq:active:default
     pub fn active(queue_name: &str) -> String {
@@ -94,6 +101,7 @@ mod tests {
     #[test]
     fn test_key_formats() {
         assert_eq!(Keys::queue("default"), "rediq:queue:default");
+        assert_eq!(Keys::priority_queue("default"), "rediq:pqueue:default");
         assert_eq!(Keys::active("default"), "rediq:active:default");
         assert_eq!(Keys::delayed("default"), "rediq:delayed:default");
         assert_eq!(Keys::retry("default"), "rediq:retry:default");

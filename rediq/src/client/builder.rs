@@ -97,6 +97,46 @@ impl Client {
         Ok(task_id)
     }
 
+    /// Enqueue to priority queue
+    ///
+    /// Tasks with lower priority values are processed first.
+    /// Priority range: 0-100 (default is 50)
+    pub async fn enqueue_priority(&self, task: Task) -> Result<String> {
+        let task_id = task.id.clone();
+        let queue = task.queue.clone();
+        let priority = task.options.priority;
+        let unique_key = task.options.unique_key.clone();
+
+        // Validate priority
+        if priority < 0 || priority > 100 {
+            return Err(Error::Validation(format!(
+                "Priority must be between 0 and 100, got {}",
+                priority
+            )));
+        }
+
+        // Serialize task
+        let task_data = rmp_serde::to_vec(&task)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        // Store task details with priority
+        let task_key: RedisKey = Keys::task(&task_id).into();
+        self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+
+        // Add to priority queue (ZSet with priority as score)
+        let pqueue_key: RedisKey = Keys::priority_queue(&queue).into();
+        self.redis.zadd(pqueue_key, task_id.as_str().into(), priority as i64).await?;
+
+        // Handle deduplication
+        if let Some(key) = unique_key {
+            let dedup_key: RedisKey = Keys::dedup(&queue).into();
+            self.redis.sadd(dedup_key, key.into()).await?;
+        }
+
+        tracing::debug!("Priority task enqueued: {} (priority: {})", task_id, priority);
+        Ok(task_id)
+    }
+
     /// Batch enqueue
     pub async fn enqueue_batch(&self, tasks: Vec<Task>) -> Result<Vec<String>> {
         let mut task_ids = Vec::with_capacity(tasks.len());
