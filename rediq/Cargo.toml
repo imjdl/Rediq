@@ -1,0 +1,45 @@
+[package]
+name = "rediq"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A distributed task queue framework for Rust based on Redis"
+keywords = ["queue", "redis", "async", "task", "distributed"]
+categories = ["asynchronous", "concurrency", "database"]
+
+[dependencies]
+# 异步运行时
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Redis 客户端
+fred = { workspace = true }
+
+# 序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmp-serde = { workspace = true }
+
+# 错误处理
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# 工具
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# 可观测性
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+prometheus = { workspace = true }
+metrics = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+
+[[example]]
+name = "quickstart"
+path = "../examples/quickstart.rs"

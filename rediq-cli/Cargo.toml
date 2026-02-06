@@ -1,0 +1,32 @@
+[package]
+name = "rediq-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI tool for Rediq distributed task queue"
+keywords = ["cli", "queue", "redis"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "rediq"
+path = "src/main.rs"
+
+[dependencies]
+# Core library
+rediq = { path = "../rediq" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# CLI tools
+clap = { workspace = true }
+comfy-table = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Color output
+color-eyre = "0.6"

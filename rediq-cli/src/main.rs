@@ -1,0 +1,251 @@
+//! Rediq CLI - Command line tool for managing distributed task queues
+
+use clap::{Parser, Subcommand};
+use rediq::client::{Client, ClientBuilder};
+
+#[derive(Parser)]
+#[command(name = "rediq")]
+#[command(about = "Rediq CLI - Manage distributed task queues", long_about = None)]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Queue operations
+    Queue {
+        #[command(subcommand)]
+        action: QueueAction,
+    },
+    /// Task operations
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
+    /// Worker operations
+    Worker {
+        #[command(subcommand)]
+        action: WorkerAction,
+    },
+    /// Statistics
+    Stats {
+        /// Queue name
+        #[arg(long, default_value = "default")]
+        queue: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum QueueAction {
+    /// List all queues
+    List,
+    /// Show queue details
+    Inspect {
+        /// Queue name
+        name: String,
+    },
+    /// Pause queue
+    Pause {
+        /// Queue name
+        name: String,
+    },
+    /// Resume queue
+    Resume {
+        /// Queue name
+        name: String,
+    },
+    /// Flush queue
+    Flush {
+        /// Queue name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskAction {
+    /// List tasks in queue
+    List {
+        /// Queue name
+        queue: String,
+        /// Limit count
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
+    /// Show task details
+    Inspect {
+        /// Task ID
+        id: String,
+    },
+    /// Cancel task
+    Cancel {
+        /// Task ID
+        id: String,
+    },
+    /// Retry failed task
+    Retry {
+        /// Task ID
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkerAction {
+    /// List all workers
+    List,
+    /// Show worker details
+    Inspect {
+        /// Worker ID
+        id: String,
+    },
+    /// Stop worker
+    Stop {
+        /// Worker ID
+        id: String,
+    },
+}
+
+#[tokio::main]
+async fn main() -> color_eyre::Result<()> {
+    let cli = Cli::parse();
+    let redis_url = std::env::var("REDIS_URL").unwrap_or("redis://localhost:6379".to_string());
+
+    match cli.command {
+        Commands::Queue { action } => {
+            handle_queue_action(&redis_url, action).await?;
+        }
+        Commands::Task { action } => {
+            handle_task_action(&redis_url, action).await?;
+        }
+        Commands::Worker { action } => {
+            handle_worker_action(&redis_url, action).await?;
+        }
+        Commands::Stats { queue } => {
+            show_stats(&redis_url, &queue).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_queue_action(redis_url: &str, action: QueueAction) -> color_eyre::Result<()> {
+    let client = Client::builder().redis_url(redis_url).build().await?;
+
+    match action {
+        QueueAction::List => {
+            println!("Queue List");
+            let inspector = client.inspector();
+            let queues = inspector.list_queues().await?;
+
+            if queues.is_empty() {
+                println!("  (No queues)");
+            } else {
+                for queue in queues {
+                    println!("  - {}", queue);
+                }
+            }
+        }
+        QueueAction::Inspect { name } => {
+            println!("Queue Details: {}", name);
+            let inspector = client.inspector();
+            let stats = inspector.queue_stats(&name).await?;
+
+            println!("  Pending: {}", stats.pending);
+            println!("  Active: {}", stats.active);
+            println!("  Delayed: {}", stats.delayed);
+            println!("  Retry: {}", stats.retried);
+            println!("  Dead: {}", stats.dead);
+        }
+        QueueAction::Pause { name } => {
+            client.pause_queue(&name).await?;
+            println!("Queue '{}' paused", name);
+        }
+        QueueAction::Resume { name } => {
+            client.resume_queue(&name).await?;
+            println!("Queue '{}' resumed", name);
+        }
+        QueueAction::Flush { name } => {
+            let count = client.flush_queue(&name).await?;
+            println!("Queue '{}' flushed, removed {} tasks", name, count);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_task_action(redis_url: &str, action: TaskAction) -> color_eyre::Result<()> {
+    let client = Client::builder().redis_url(redis_url).build().await?;
+
+    match action {
+        TaskAction::List { queue, limit } => {
+            println!("Tasks in queue '{}' (max {}):", queue, limit);
+            // TODO: Implement task list
+        }
+        TaskAction::Inspect { id } => {
+            println!("Task Details: {}", id);
+            let inspector = client.inspector();
+            match inspector.get_task(&id).await {
+                Ok(task) => {
+                    println!("  ID: {}", task.id);
+                    println!("  Type: {}", task.task_type);
+                    println!("  Queue: {}", task.queue);
+                    println!("  Status: {}", task.status);
+                    println!("  Retry count: {}", task.retry_cnt);
+                    if let Some(error) = task.last_error {
+                        println!("  Last error: {}", error);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
+        }
+        TaskAction::Cancel { id } => {
+            println!("Cancel task: {}", id);
+            // TODO: Implement task cancellation
+        }
+        TaskAction::Retry { id } => {
+            println!("Retry task: {}", id);
+            // TODO: Implement task retry
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_worker_action(redis_url: &str, action: WorkerAction) -> color_eyre::Result<()> {
+    match action {
+        WorkerAction::List => {
+            println!("Worker List");
+            // TODO: Implement list functionality
+        }
+        WorkerAction::Inspect { id } => {
+            println!("Worker Details: {}", id);
+            // TODO: Implement details functionality
+        }
+        WorkerAction::Stop { id } => {
+            println!("Stop worker: {}", id);
+            // TODO: Implement stop functionality
+        }
+    }
+
+    Ok(())
+}
+
+async fn show_stats(redis_url: &str, queue_name: &str) -> color_eyre::Result<()> {
+    let client = Client::builder().redis_url(redis_url).build().await?;
+    let inspector = client.inspector();
+
+    println!("Statistics");
+    let stats = inspector.queue_stats(queue_name).await?;
+
+    println!("  Queue: {}", stats.name);
+    println!("  Pending: {}", stats.pending);
+    println!("  Active: {}", stats.active);
+    println!("  Delayed: {}", stats.delayed);
+    println!("  Retry: {}", stats.retried);
+    println!("  Dead: {}", stats.dead);
+
+    Ok(())
+}
