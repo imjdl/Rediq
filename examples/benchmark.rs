@@ -99,6 +99,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::WARN)
         .init();
 
+    // Build queue names
+    let queue_names: Vec<String> = (0..args.queues)
+        .map(|i| format!("queue-{}", i))
+        .collect();
+
     println!("╔════════════════════════════════════════════════════════════╗");
     println!("║                    Rediq Benchmark Tool                      ║");
     println!("╚════════════════════════════════════════════════════════════╝");
@@ -109,6 +114,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Batch size:     {}", args.batch_size);
     println!("  Task duration:  {}ms", args.task_duration);
     println!("  Queues:         {}", args.queues);
+    if args.queues > 1 {
+        let tasks_per_queue = args.tasks / args.queues;
+        println!("    └ Queue distribution:");
+        for (i, queue) in queue_names.iter().enumerate() {
+            let start = i * tasks_per_queue;
+            let end = if i == args.queues - 1 { args.tasks } else { start + tasks_per_queue };
+            println!("       - {}: {} tasks (ID: {}-{})", queue, end - start, start, end - 1);
+        }
+    }
     println!("  Priority:       {}", args.priority);
     println!("  Payload size:   {}KB", args.payload_size);
     println!("  Redis URL:      {}", redis_url);
@@ -121,9 +135,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Build server state
-    let queue_names: Vec<String> = (0..args.queues)
-        .map(|i| format!("queue-{}", i))
-        .collect();
 
     let state = ServerBuilder::new()
         .redis_url(&redis_url)
@@ -299,6 +310,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Calculate percentiles if we had timing data
     println!("  Avg latency:        ~{}ms", args.task_duration + process_duration.as_millis() as u64 / final_processed.max(1) as u64);
+    println!();
+
+    // ===== PER-QUEUE STATISTICS =====
+    if args.queues > 1 {
+        println!("╔════════════════════════════════════════════════════════════╗");
+        println!("║                    Per-Queue Statistics                    ║");
+        println!("╚════════════════════════════════════════════════════════════╝");
+        println!();
+
+        let inspector = client.inspector();
+        for queue in &queue_names {
+            if let Ok(stats) = inspector.queue_stats(queue).await {
+                println!("  Queue: {}", queue);
+                println!("    Pending:    {}", stats.pending);
+                println!("    Active:     {}", stats.active);
+                println!("    Delayed:    {}", stats.delayed);
+                println!("    Retry:      {}", stats.retried);
+                println!("    Dead:       {}", stats.dead);
+                println!();
+            }
+        }
+    }
 
     // Shutdown server
     println!("Shutting down...");
