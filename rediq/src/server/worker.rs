@@ -111,6 +111,12 @@ impl Worker {
         let workers_key: RedisKey = Keys::meta_workers().into();
         self.state.redis.sadd(workers_key, self.id.as_str().into()).await?;
 
+        // Add queues to meta:queues set
+        let queues_key: RedisKey = Keys::meta_queues().into();
+        for queue in &self.state.config.queues {
+            self.state.redis.sadd(queues_key.clone(), queue.as_str().into()).await?;
+        }
+
         // Initial heartbeat
         self.update_heartbeat().await?;
 

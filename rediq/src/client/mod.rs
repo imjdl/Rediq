@@ -82,10 +82,8 @@ impl Inspector {
     /// List all queues
     pub async fn list_queues(&self) -> Result<Vec<String>> {
         let key: RedisKey = Keys::meta_queues().into();
-        let _members = self.redis.get(key).await?;
-
-        // TODO: Implement getting queue list from SMEMBERS
-        Ok(Vec::new())
+        let queues = self.redis.smembers(key).await?;
+        Ok(queues)
     }
 
     /// List tasks in a queue
