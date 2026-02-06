@@ -11,28 +11,28 @@ keywords = ["queue", "redis", "async", "task", "distributed"]
 categories = ["asynchronous", "concurrency", "database"]
 
 [dependencies]
-# 异步运行时
+# Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
 
-# Redis 客户端
+# Redis client
 fred = { workspace = true }
 
-# 序列化
+# Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
 rmp-serde = { workspace = true }
 
-# 错误处理
+# Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
-# 工具
+# Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }
 
-# 可观测性
+# Observability
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 prometheus = { workspace = true }
