@@ -51,3 +51,7 @@ path = "../examples/auto_test.rs"
 [[example]]
 name = "batch_test"
 path = "../examples/batch_test.rs"
+
+[[example]]
+name = "middleware_test"
+path = "../examples/middleware_test.rs"

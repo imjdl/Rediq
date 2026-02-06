@@ -277,6 +277,11 @@ impl Worker {
     async fn process_task(&self, mut task: Task) -> Result<()> {
         tracing::debug!("Processing task: {}", task.description());
 
+        // Execute middleware before hooks
+        if !self.state.middleware.is_empty() {
+            self.state.middleware.before(&task).await?;
+        }
+
         // Get handler and process with timeout
         let mux = self.mux.lock().await;
         let handler = mux.process(&task);
@@ -291,6 +296,11 @@ impl Worker {
                 Err(Error::Timeout(format!("Task {} timed out after {:?}", task.id, task.options.timeout)))
             }
         };
+
+        // Execute middleware after hooks
+        if !self.state.middleware.is_empty() {
+            let _ = self.state.middleware.after(&task, &process_result).await;
+        }
 
         // Update task status based on result
         match &process_result {

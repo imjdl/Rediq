@@ -4,6 +4,7 @@
 
 use crate::{Error, Result};
 use crate::storage::RedisClient;
+use crate::middleware::MiddlewareChain;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -77,6 +78,7 @@ impl Default for ServerConfig {
 #[derive(Debug, Default)]
 pub struct ServerBuilder {
     config: ServerConfig,
+    middleware: MiddlewareChain,
 }
 
 impl ServerBuilder {
@@ -85,7 +87,32 @@ impl ServerBuilder {
     pub fn new() -> Self {
         Self {
             config: ServerConfig::default(),
+            middleware: MiddlewareChain::new(),
         }
+    }
+
+    /// Add middleware to the server
+    ///
+    /// Middleware will be executed in the order they are added.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::server::ServerBuilder;
+    /// use rediq::middleware::LoggingMiddleware;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let server = ServerBuilder::new()
+    ///     .middleware(LoggingMiddleware::new())
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn middleware<M: crate::middleware::Middleware + 'static>(mut self, middleware: M) -> Self {
+        self.middleware = self.middleware.add(middleware);
+        self
     }
 
     /// Set Redis connection URL
@@ -208,6 +235,7 @@ impl ServerBuilder {
         Ok(ServerState {
             config: Arc::new(self.config),
             redis,
+            middleware: Arc::new(self.middleware),
         })
     }
 }
@@ -223,6 +251,9 @@ pub struct ServerState {
 
     /// Redis client
     pub redis: RedisClient,
+
+    /// Middleware chain
+    pub middleware: Arc<MiddlewareChain>,
 }
 
 #[cfg(test)]
