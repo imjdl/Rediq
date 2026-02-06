@@ -385,20 +385,24 @@ async fn show_stats(redis_url: &str, queue_name: &str) -> color_eyre::Result<()>
 }
 
 async fn handle_purge(redis_url: &str, workers: bool, queues: bool, all: bool) -> color_eyre::Result<()> {
-    let client = Client::builder().redis_url(redis_url).build().await?;
-    let inspector = client.inspector();
+    // Parse Redis URL to extract connection details (do this first for --all case)
+    let conn_info = parse_redis_url(redis_url);
 
     if all {
         println!("⚠️  Purging ALL Rediq metadata...");
         println!();
         println!("To purge all metadata, run:");
-        println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL \"rediq:meta:workers\"");
-        println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL \"rediq:meta:queues\"");
+        print_redis_command(&conn_info, "DEL \"rediq:meta:workers\"");
+        print_redis_command(&conn_info, "DEL \"rediq:meta:queues\"");
         println!();
         println!("Or flush the entire database:");
-        println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning FLUSHDB");
+        print_redis_command(&conn_info, "FLUSHDB");
         return Ok(());
     }
+
+    // For other options, we need to connect to Redis to inspect data
+    let client = Client::builder().redis_url(redis_url).build().await?;
+    let inspector = client.inspector();
 
     if workers {
         println!("Purging stale worker metadata...");
@@ -419,8 +423,12 @@ async fn handle_purge(redis_url: &str, workers: bool, queues: bool, all: bool) -
         if stale_count > 0 {
             println!();
             println!("  To remove stale workers, run:");
-            println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL \"rediq:meta:workers\"");
-            println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning --scan --pattern 'rediq:meta:worker:*' | xargs -L 1 redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL");
+            print_redis_command_indented(&conn_info, 2, "DEL \"rediq:meta:workers\"");
+            println!("  {}redis-cli {} --scan --pattern 'rediq:meta:worker:*' | xargs -L 1 redis-cli {} DEL",
+                "  ".repeat(2),
+                build_redis_cli_args(&conn_info),
+                build_redis_cli_args(&conn_info)
+            );
         } else {
             println!("  ✓ No stale workers found");
         }
@@ -445,7 +453,7 @@ async fn handle_purge(redis_url: &str, workers: bool, queues: bool, all: bool) -
         if empty_count > 0 {
             println!();
             println!("  To remove empty queues from metadata, run:");
-            println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning SREM \"rediq:meta:queues\" \"<queue-name>\"");
+            print_redis_command_indented(&conn_info, 2, "SREM \"rediq:meta:queues\" \"<queue-name>\"");
         } else {
             println!("  ✓ No empty queues found");
         }
@@ -466,4 +474,105 @@ async fn handle_purge(redis_url: &str, workers: bool, queues: bool, all: bool) -
     }
 
     Ok(())
+}
+
+/// Parse Redis URL and extract connection details
+fn parse_redis_url(url: &str) -> RedisConnectionInfo {
+    // Default values
+    let mut host = "localhost".to_string();
+    let mut port = 6379;
+    let mut password = None;
+    let mut db = 0;
+
+    // Remove protocol prefix
+    let url = url.strip_prefix("redis://").unwrap_or(url);
+
+    // Parse format: [:password@]host[:port][/db]
+    let parts: Vec<&str> = url.split('@').collect();
+
+    if parts.len() > 1 {
+        // Has authentication: [password@]host[:port][/db]
+        let auth_part = parts[0];
+        let remaining = parts[1];
+
+        // Check if password exists (format: :password or just @ for no password)
+        if !auth_part.is_empty() {
+            password = Some(auth_part.strip_prefix(':').unwrap_or(auth_part).to_string());
+        }
+
+        // Parse host:port/db from remaining part
+        parse_host_port_db(remaining, &mut host, &mut port, &mut db);
+    } else {
+        // No authentication: host[:port][/db]
+        parse_host_port_db(parts[0], &mut host, &mut port, &mut db);
+    }
+
+    RedisConnectionInfo { host, port, password, db }
+}
+
+/// Parse host, port, and database from URL part
+fn parse_host_port_db(s: &str, host: &mut String, port: &mut u16, db: &mut i64) {
+    // Split by / to separate [host:port] and [db]
+    let parts: Vec<&str> = s.split('/').collect();
+
+    let addr_part = parts[0];
+
+    // Parse host:port
+    if let Some(colon_pos) = addr_part.rfind(':') {
+        if let Some(parsed_port) = addr_part[colon_pos + 1..].parse::<u16>().ok() {
+            *port = parsed_port;
+            *host = addr_part[..colon_pos].to_string();
+        } else {
+            *host = addr_part.to_string();
+        }
+    } else {
+        *host = addr_part.to_string();
+    }
+
+    // Parse database number
+    if parts.len() > 1 {
+        if let Some(parsed_db) = parts[1].parse::<i64>().ok() {
+            *db = parsed_db;
+        }
+    }
+}
+
+/// Build redis-cli arguments from connection info
+fn build_redis_cli_args(info: &RedisConnectionInfo) -> String {
+    let mut args = vec![
+        format!("-h {}", info.host),
+        format!("-p {}", info.port),
+    ];
+
+    if let Some(ref pwd) = info.password {
+        args.push(format!("-a \"{}\"", pwd));
+    }
+
+    args.push("--no-auth-warning".to_string());
+
+    if info.db > 0 {
+        args.push(format!("-n {}", info.db));
+    }
+
+    args.join(" ")
+}
+
+/// Print a redis-cli command with connection info
+fn print_redis_command(info: &RedisConnectionInfo, cmd: &str) {
+    println!("  redis-cli {} {}", build_redis_cli_args(info), cmd);
+}
+
+/// Print a redis-cli command with connection info and indentation
+fn print_redis_command_indented(info: &RedisConnectionInfo, indent: usize, cmd: &str) {
+    let indent_str = " ".repeat(indent);
+    println!("{}redis-cli {} {}", indent_str, build_redis_cli_args(info), cmd);
+}
+
+/// Redis connection information extracted from URL
+#[derive(Debug, Clone)]
+struct RedisConnectionInfo {
+    host: String,
+    port: u16,
+    password: Option<String>,
+    db: i64,
 }

@@ -357,6 +357,20 @@ rediq purge --queues
 rediq purge --all
 ```
 
+**Output with --all:**
+```
+⚠️  Purging ALL Rediq metadata...
+
+To purge all metadata, run:
+  redis-cli -h 192.168.1.128 -p 6379 -a "password" --no-auth-warning DEL "rediq:meta:workers"
+  redis-cli -h 192.168.1.128 -p 6379 -a "password" --no-auth-warning DEL "rediq:meta:queues"
+
+Or flush the entire database:
+  redis-cli -h 192.168.1.128 -p 6379 -a "password" --no-auth-warning FLUSHDB
+```
+
+**Important:** The `purge` command automatically extracts connection details from the `REDIS_URL` environment variable and generates ready-to-run `redis-cli` commands. You don't need to manually substitute placeholders.
+
 **Why you might need purge:**
 
 When worker processes exit abnormally (kill, crash, etc.), their metadata may remain in Redis. The `purge` command helps identify and clean up this stale metadata.
