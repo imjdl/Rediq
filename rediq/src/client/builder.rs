@@ -49,6 +49,7 @@ impl Client {
         let task_id = task.id.clone();
         let queue = task.queue.clone();
         let unique_key = task.options.unique_key.clone();
+        let deps = task.options.depends_on.clone();
 
         // Serialize task
         let task_data = rmp_serde::to_vec(&task)
@@ -57,6 +58,27 @@ impl Client {
         // Store task details
         let task_key: RedisKey = Keys::task(&task_id).into();
         self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+
+        // Handle dependencies - if task has dependencies, don't enqueue to main queue yet
+        if let Some(deps) = deps {
+            if !deps.is_empty() {
+                // Store pending dependencies for this task
+                let pending_deps_key: RedisKey = Keys::pending_deps(&task_id).into();
+                let dep_values: Vec<RedisValue> = deps.iter().map(|id| id.as_str().into()).collect();
+                for dep in &dep_values {
+                    self.redis.sadd(pending_deps_key.clone(), dep.clone()).await?;
+                }
+
+                // Register this task as dependent on each dependency
+                for dep_id in &deps {
+                    let task_deps_key: RedisKey = Keys::task_deps(dep_id).into();
+                    self.redis.sadd(task_deps_key, task_id.as_str().into()).await?;
+                }
+
+                tracing::debug!("Task {} registered with {} dependencies (not enqueued yet)", task_id, deps.len());
+                return Ok(task_id);
+            }
+        }
 
         // Add task_id to queue
         let queue_key: RedisKey = Keys::queue(&queue).into();

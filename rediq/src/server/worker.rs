@@ -391,6 +391,69 @@ impl Worker {
 
         self.state.redis.set(task_key, RedisValue::Bytes(data.into())).await?;
 
+        // If task was successfully processed, check for dependent tasks
+        if status == TaskStatus::Processed {
+            if let Err(e) = self.check_dependent_tasks(&task.id).await {
+                tracing::error!("Failed to check dependent tasks: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check and enqueue dependent tasks
+    ///
+    /// Called when a task completes successfully. Checks if any tasks were waiting for
+    /// this task and enqueues them if all their dependencies are satisfied.
+    async fn check_dependent_tasks(&self, completed_task_id: &str) -> Result<()> {
+        use fred::prelude::RedisValue;
+
+        // Get tasks that depend on the completed task
+        let task_deps_key: RedisKey = Keys::task_deps(completed_task_id).into();
+        let dependents = self.state.redis.smembers(task_deps_key.clone()).await?;
+
+        if dependents.is_empty() {
+            return Ok(());
+        }
+
+        tracing::debug!("Task {} has {} dependent tasks", completed_task_id, dependents.len());
+
+        for dependent_id in dependents {
+            let dependent_id_str = dependent_id.as_str().to_string();
+
+            // Remove the completed task from the pending dependencies
+            let pending_deps_key: RedisKey = Keys::pending_deps(&dependent_id_str).into();
+            self.state.redis.srem(pending_deps_key.clone(), completed_task_id.into()).await?;
+
+            // Check if all dependencies are satisfied
+            let remaining_deps: u64 = self.state.redis.scard(pending_deps_key.clone()).await?;
+
+            if remaining_deps == 0 {
+                // All dependencies satisfied, load and enqueue the task
+                if let Some(task_data) = self.state.redis.get(Keys::task(&dependent_id_str).into()).await? {
+                    let bytes = task_data.as_bytes()
+                        .ok_or_else(|| Error::Serialization("Task data is not bytes".into()))?;
+
+                    let task: Task = rmp_serde::from_slice(bytes)
+                        .map_err(|e| Error::Serialization(e.to_string()))?;
+
+                    // Enqueue the task to its queue
+                    let queue_key: RedisKey = Keys::queue(&task.queue).into();
+                    self.state.redis.rpush(queue_key, dependent_id.as_str().into()).await?;
+
+                    tracing::info!("Task {} enqueued after all dependencies satisfied", dependent_id);
+
+                    // Clean up pending deps key
+                    self.state.redis.del(vec![pending_deps_key]).await?;
+                }
+            } else {
+                tracing::debug!("Task {} still has {} pending dependencies", dependent_id, remaining_deps);
+            }
+        }
+
+        // Clean up the task deps key for the completed task
+        self.state.redis.del(vec![task_deps_key]).await?;
+
         Ok(())
     }
 

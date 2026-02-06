@@ -85,3 +85,7 @@ path = "../examples/cluster_example.rs"
 [[example]]
 name = "sentinel_example"
 path = "../examples/sentinel_example.rs"
+
+[[example]]
+name = "dependency_example"
+path = "../examples/dependency_example.rs"

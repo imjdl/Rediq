@@ -99,6 +99,20 @@ impl Keys {
     pub fn stats(queue_name: &str) -> String {
         format!("{}:stats:{}", PREFIX, queue_name)
     }
+
+    /// Pending dependencies Key (Hash)
+    /// Maps task_id -> set of pending dependency task IDs
+    /// Example: redik:pending_deps:{task_id}
+    pub fn pending_deps(task_id: &str) -> String {
+        format!("{}:pending_deps:{}", PREFIX, task_id)
+    }
+
+    /// Task dependents Key (Set)
+    /// Stores IDs of tasks that depend on this task
+    /// Example: rediq:task_deps:{task_id}
+    pub fn task_deps(task_id: &str) -> String {
+        format!("{}:task_deps:{}", PREFIX, task_id)
+    }
 }
 
 #[cfg(test)]
@@ -122,5 +136,7 @@ mod tests {
         assert_eq!(Keys::meta_heartbeat("worker-1"), "rediq:meta:heartbeat:worker-1");
         assert_eq!(Keys::pause("default"), "rediq:pause:default");
         assert_eq!(Keys::stats("default"), "rediq:stats:default");
+        assert_eq!(Keys::pending_deps("task-123"), "rediq:pending_deps:task-123");
+        assert_eq!(Keys::task_deps("task-456"), "rediq:task_deps:task-456");
     }
 }

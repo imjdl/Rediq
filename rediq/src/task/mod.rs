@@ -67,6 +67,8 @@ pub struct TaskOptions {
     pub unique_key: Option<String>,
     /// Priority (0-100, higher value means higher priority)
     pub priority: i32,
+    /// Task dependencies - list of task IDs that must complete before this task runs
+    pub depends_on: Option<Vec<String>>,
 }
 
 impl Default for TaskOptions {
@@ -78,6 +80,7 @@ impl Default for TaskOptions {
             cron: None,
             unique_key: None,
             priority: 50,
+            depends_on: None,
         }
     }
 }

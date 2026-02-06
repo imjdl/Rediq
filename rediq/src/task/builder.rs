@@ -123,6 +123,33 @@ impl TaskBuilder {
         self
     }
 
+    /// Set task dependencies
+    ///
+    /// The task will only execute after all specified dependency tasks have completed successfully.
+    ///
+    /// # Arguments
+    /// * `deps` - Slice of task IDs that this task depends on
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::Task;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let task_b = Task::builder("process:b")
+    ///     .queue("default")
+    ///     .raw_payload(b"data")
+    ///     .depends_on(&["task-a-id-123"])
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn depends_on(mut self, deps: &[&str]) -> Self {
+        self.options.depends_on = Some(deps.iter().map(|s| s.to_string()).collect());
+        self
+    }
+
     /// Build the task
     pub fn build(self) -> Result<Task> {
         let now = Utc::now().timestamp();
@@ -275,5 +302,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(task.options.cron, Some("0 0 * * *".to_string()));
+    }
+
+    #[test]
+    fn test_builder_with_dependencies() {
+        let task = Task::builder("test:task")
+            .payload(&TestPayload {
+                message: "Hello".to_string(),
+            })
+            .unwrap()
+            .depends_on(&["task-1", "task-2", "task-3"])
+            .build()
+            .unwrap();
+
+        assert_eq!(task.options.depends_on, Some(vec!["task-1".to_string(), "task-2".to_string(), "task-3".to_string()]));
     }
 }

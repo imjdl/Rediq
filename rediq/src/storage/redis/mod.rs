@@ -367,6 +367,18 @@ impl RedisClient {
         Ok(result > 0)
     }
 
+    /// Set operation: get all members
+    pub async fn smembers(&self, key: RedisKey) -> Result<Vec<String>> {
+        let result: Vec<RedisValue> = self.pool.smembers(key).await?;
+        Ok(result.into_iter().filter_map(|v| v.as_string().map(|s| s.to_string())).collect())
+    }
+
+    /// Set operation: get cardinality (number of members)
+    pub async fn scard(&self, key: RedisKey) -> Result<u64> {
+        let result: u64 = self.pool.scard(key).await?;
+        Ok(result)
+    }
+
     /// Hash operation: set field
     pub async fn hset(&self, key: RedisKey, values: Vec<(RedisKey, RedisValue)>) -> Result<bool> {
         let result: u64 = self.pool.hset(key, values).await?;
