@@ -1,7 +1,7 @@
 //! Rediq CLI - Command line tool for managing distributed task queues
 
 use clap::{Parser, Subcommand};
-use rediq::client::{Client, ClientBuilder};
+use rediq::client::Client;
 
 #[derive(Parser)]
 #[command(name = "rediq")]
