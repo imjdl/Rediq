@@ -138,7 +138,7 @@ impl TaskBuilder {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let task_b = Task::builder("process:b")
     ///     .queue("default")
-    ///     .raw_payload(b"data")
+    ///     .raw_payload(b"data".to_vec())
     ///     .depends_on(&["task-a-id-123"])
     ///     .build()?;
     /// # Ok(())
