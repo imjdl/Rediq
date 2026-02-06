@@ -56,8 +56,8 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     payload_size: usize,
 
-    /// Redis URL
-    #[arg(long, default_value = "redis://localhost:6379")]
+    /// Redis URL (reads from REDIS_URL environment variable if not specified)
+    #[arg(long)]
     redis_url: Option<String>,
 }
 
