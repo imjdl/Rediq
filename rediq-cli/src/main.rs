@@ -43,6 +43,18 @@ enum Commands {
         #[arg(short, long, default_value = "500")]
         interval: u64,
     },
+    /// Clean up stale metadata
+    Purge {
+        /// Remove stale worker metadata
+        #[arg(long, default_value_t = false)]
+        workers: bool,
+        /// Remove empty queue metadata
+        #[arg(long, default_value_t = false)]
+        queues: bool,
+        /// Remove all metadata (use with caution)
+        #[arg(long, default_value_t = false)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -145,6 +157,9 @@ async fn main() -> color_eyre::Result<()> {
                 eprintln!("Dashboard error: {}", e);
                 return Err(color_eyre::eyre::eyre!(e));
             }
+        }
+        Commands::Purge { workers, queues, all } => {
+            handle_purge(&redis_url, workers, queues, all).await?;
         }
     }
 
@@ -365,6 +380,90 @@ async fn show_stats(redis_url: &str, queue_name: &str) -> color_eyre::Result<()>
     println!("  Delayed: {}", stats.delayed);
     println!("  Retry: {}", stats.retried);
     println!("  Dead: {}", stats.dead);
+
+    Ok(())
+}
+
+async fn handle_purge(redis_url: &str, workers: bool, queues: bool, all: bool) -> color_eyre::Result<()> {
+    let client = Client::builder().redis_url(redis_url).build().await?;
+    let inspector = client.inspector();
+
+    if all {
+        println!("⚠️  Purging ALL Rediq metadata...");
+        println!();
+        println!("To purge all metadata, run:");
+        println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL \"rediq:meta:workers\"");
+        println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL \"rediq:meta:queues\"");
+        println!();
+        println!("Or flush the entire database:");
+        println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning FLUSHDB");
+        return Ok(());
+    }
+
+    if workers {
+        println!("Purging stale worker metadata...");
+        let workers = inspector.list_workers().await?;
+
+        let mut stale_count = 0;
+        for worker in workers {
+            // Check if worker has recent heartbeat (within 2 minutes)
+            let now = chrono::Utc::now().timestamp();
+            let heartbeat_age = now - worker.last_heartbeat;
+
+            if heartbeat_age > 120 {
+                println!("  - Found stale worker: {} (last heartbeat {}s ago)", worker.id, heartbeat_age);
+                stale_count += 1;
+            }
+        }
+
+        if stale_count > 0 {
+            println!();
+            println!("  To remove stale workers, run:");
+            println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL \"rediq:meta:workers\"");
+            println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning --scan --pattern 'rediq:meta:worker:*' | xargs -L 1 redis-cli -h <host> -p <port> -a <password> --no-auth-warning DEL");
+        } else {
+            println!("  ✓ No stale workers found");
+        }
+    }
+
+    if queues {
+        println!("Purging empty queue metadata...");
+        let queues = inspector.list_queues().await?;
+
+        let mut empty_count = 0;
+        for queue in queues {
+            let stats = inspector.queue_stats(&queue).await?;
+            let is_empty = stats.pending == 0 && stats.active == 0
+                && stats.delayed == 0 && stats.retried == 0 && stats.dead == 0;
+
+            if is_empty {
+                println!("  - Found empty queue: {}", queue);
+                empty_count += 1;
+            }
+        }
+
+        if empty_count > 0 {
+            println!();
+            println!("  To remove empty queues from metadata, run:");
+            println!("  redis-cli -h <host> -p <port> -a <password> --no-auth-warning SREM \"rediq:meta:queues\" \"<queue-name>\"");
+        } else {
+            println!("  ✓ No empty queues found");
+        }
+    }
+
+    if !workers && !queues && !all {
+        println!("Purge stale metadata from Redis");
+        println!();
+        println!("Usage: rediq purge [--workers] [--queues] [--all]");
+        println!("  --workers   Show stale workers (no heartbeat in 2+ minutes)");
+        println!("  --queues    Show empty queues");
+        println!("  --all       Show commands to purge all metadata");
+        println!();
+        println!("Examples:");
+        println!("  rediq purge --workers    # List stale workers");
+        println!("  rediq purge --queues     # List empty queues");
+        println!("  rediq purge --all        # Show purge commands");
+    }
 
     Ok(())
 }
