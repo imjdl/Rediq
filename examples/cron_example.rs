@@ -13,6 +13,7 @@ use rediq::server::{Server, ServerBuilder};
 use rediq::Task;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -76,9 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Starting Cron Task Example");
 
+    // Get Redis URL from environment variable
+    let redis_url = env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
     // Build server state
     let state = ServerBuilder::new()
-        .redis_url("redis://192.168.1.128:6379")
+        .redis_url(&redis_url)
         .queues(&["maintenance", "reports"])
         .concurrency(2)
         .build()
@@ -92,19 +97,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     mux.handle("cleanup:daily", CleanupHandler);
     mux.handle("report:hourly", ReportHandler);
 
-    // Spawn task enqueuer
-    let enqueuer = tokio::spawn(async move {
+    // Spawn task enqueuer in the background
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(2)).await;
+
         if let Err(e) = (async move {
-            sleep(Duration::from_secs(2)).await;
+            // Get Redis URL from environment variable
+            let redis_url = env::var("REDIS_URL")
+                .unwrap_or_else(|_| "redis://localhost:6379".to_string());
 
             let client = Client::builder()
-                .redis_url("redis://192.168.1.128:6379")
+                .redis_url(&redis_url)
                 .build()
                 .await?;
 
             // Enqueue cron tasks with different schedules
             // Cron format: seconds minutes hours day month weekday
-            // Example: "0 */5 * * * *" = every 5 minutes
+            // Example: "*/5 * * * * *" = every 5 seconds
 
             // Cleanup task - every 30 seconds for demo (use "0 0 * * * *" for daily)
             let cleanup_json = serde_json::to_string(&CleanupData {
@@ -114,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let cleanup_task = Task::builder("cleanup:daily")
                 .queue("maintenance")
-                .cron("0 */30 * * * *")
+                .cron("*/30 * * * * *")
                 .raw_payload(cleanup_json.into_bytes())
                 .max_retry(3)
                 .timeout(Duration::from_secs(30))
@@ -131,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let report_task = Task::builder("report:hourly")
                 .queue("reports")
-                .cron("0 */45 * * * *")
+                .cron("*/45 * * * * *")
                 .raw_payload(report_json.into_bytes())
                 .max_retry(3)
                 .timeout(Duration::from_secs(30))
@@ -159,11 +168,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("==============================================");
     tracing::info!("Press Ctrl+C to stop the server");
 
-    // Run the server
-    tokio::select! {
-        _ = server.run(mux) => {},
-        r = enqueuer => { r?; },
-    }
+    // Run the server indefinitely
+    server.run(mux).await?;
 
     Ok(())
 }
