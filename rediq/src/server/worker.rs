@@ -397,12 +397,42 @@ impl Worker {
 
         self.state.redis.set(task_key, RedisValue::Bytes(data.into())).await?;
 
+        // Update worker processed_total on successful completion
+        if status == TaskStatus::Processed {
+            self.increment_processed().await?;
+        }
+
         // If task was successfully processed, check for dependent tasks
         if status == TaskStatus::Processed {
             if let Err(e) = self.check_dependent_tasks(&task.id).await {
                 tracing::error!("Failed to check dependent tasks: {}", e);
             }
         }
+
+        Ok(())
+    }
+
+    /// Increment worker processed count
+    async fn increment_processed(&self) -> Result<()> {
+        // Get current metadata
+        let worker_key: RedisKey = Keys::meta_worker(&self.id).into();
+        let data = self.state.redis.get(worker_key.clone()).await?
+            .ok_or_else(|| Error::Validation("Worker metadata not found".into()))?;
+
+        let bytes = data.as_bytes()
+            .ok_or_else(|| Error::Serialization("Worker data is not bytes".into()))?;
+
+        let mut metadata: WorkerMetadata = rmp_serde::from_slice(bytes)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        // Increment and update
+        metadata.processed_total += 1;
+        metadata.last_heartbeat = Utc::now().timestamp();
+
+        let new_data = rmp_serde::to_vec(&metadata)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        self.state.redis.set(worker_key, RedisValue::Bytes(new_data.into())).await?;
 
         Ok(())
     }
