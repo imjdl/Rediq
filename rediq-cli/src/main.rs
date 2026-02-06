@@ -1,5 +1,7 @@
 //! Rediq CLI - Command line tool for managing distributed task queues
 
+mod dashboard;
+
 use clap::{Parser, Subcommand};
 use rediq::client::Client;
 
@@ -34,6 +36,12 @@ enum Commands {
         /// Queue name
         #[arg(long, default_value = "default")]
         queue: String,
+    },
+    /// Real-time dashboard
+    Dash {
+        /// Refresh interval in milliseconds
+        #[arg(short, long, default_value = "500")]
+        interval: u64,
     },
 }
 
@@ -131,6 +139,12 @@ async fn main() -> color_eyre::Result<()> {
         }
         Commands::Stats { queue } => {
             show_stats(&redis_url, &queue).await?;
+        }
+        Commands::Dash { interval } => {
+            if let Err(e) = dashboard::run(&redis_url, interval).await {
+                eprintln!("Dashboard error: {}", e);
+                return Err(color_eyre::eyre::eyre!(e));
+            }
         }
     }
 
