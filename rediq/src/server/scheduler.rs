@@ -5,10 +5,10 @@
 
 use crate::{
     storage::{Keys, RedisClient},
-    Error, Result,
+    Error, Result, Task,
 };
 use chrono::Utc;
-use fred::prelude::RedisKey;
+use fred::prelude::{RedisKey, RedisValue};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,12 +43,13 @@ impl Scheduler {
     /// Run the scheduler loop
     ///
     /// This method runs continuously until shutdown is requested.
-    /// It checks both delayed and retry queues at regular intervals.
+    /// It checks retry, delayed, and cron queues at regular intervals.
     pub async fn run(self) -> Result<()> {
         tracing::info!("Scheduler started for queues: {:?}", self.queues);
 
         let mut retry_interval = tokio::time::interval(Duration::from_secs(1));
         let mut delayed_interval = tokio::time::interval(Duration::from_secs(5));
+        let mut cron_interval = tokio::time::interval(Duration::from_secs(60));
 
         loop {
             tokio::select! {
@@ -60,6 +61,11 @@ impl Scheduler {
                 _ = delayed_interval.tick() => {
                     if let Err(e) = self.check_delayed_tasks().await {
                         tracing::error!("Delayed check error: {}", e);
+                    }
+                }
+                _ = cron_interval.tick() => {
+                    if let Err(e) = self.check_cron_tasks().await {
+                        tracing::error!("Cron check error: {}", e);
                     }
                 }
             }
@@ -134,6 +140,88 @@ impl Scheduler {
         }
 
         Ok(())
+    }
+
+    /// Check and process cron tasks
+    ///
+    /// This method scans the cron queue for periodic tasks that are due
+    /// and creates new task instances for processing.
+    async fn check_cron_tasks(&self) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        for queue in &self.queues {
+            let cron_key: RedisKey = Keys::cron_queue(queue).into();
+            let queue_key: RedisKey = Keys::queue(queue).into();
+
+            // Get cron tasks that are due
+            let task_ids = self.redis.zrangebyscore(cron_key.clone(), 0, now).await?;
+
+            for task_id in task_ids {
+                // Load the cron task template
+                let task_key: RedisKey = Keys::task(&task_id).into();
+                if let Some(data) = self.redis.get(task_key).await? {
+                    let bytes = data.as_bytes()
+                        .ok_or_else(|| Error::Serialization("Task data is not bytes".into()))?;
+
+                    let cron_task: Task = rmp_serde::from_slice(bytes)
+                        .map_err(|e| Error::Serialization(e.to_string()))?;
+
+                    // Get the cron expression
+                    let cron_expr = cron_task.options.cron.clone()
+                        .ok_or_else(|| Error::Validation("Cron task missing cron expression".into()))?;
+
+                    // Remove from cron queue temporarily
+                    self.redis.zrem(cron_key.clone(), task_id.as_str().into()).await?;
+
+                    // Create a new task instance (without cron expression, with regular delay)
+                    let new_task = Task::builder(cron_task.task_type.clone())
+                        .queue(queue.clone())
+                        .max_retry(cron_task.options.max_retry)
+                        .timeout(cron_task.options.timeout)
+                        .priority(cron_task.options.priority)
+                        .raw_payload(cron_task.payload.clone())
+                        .build()
+                        .unwrap();
+
+                    // Store the new task
+                    let new_task_key: RedisKey = Keys::task(&new_task.id).into();
+                    let new_task_data = rmp_serde::to_vec(&new_task)
+                        .map_err(|e| Error::Serialization(e.to_string()))?;
+                    self.redis.set(new_task_key, RedisValue::Bytes(new_task_data.into())).await?;
+
+                    // Enqueue the new task instance
+                    self.redis.rpush(queue_key.clone(), new_task.id.as_str().into()).await?;
+
+                    tracing::debug!("Cron task {} instantiated and queued", task_id);
+
+                    // Calculate next scheduled time
+                    if let Some(next_time) = self.calculate_next_cron_time(&cron_expr, now) {
+                        // Re-add the cron template to the cron queue with next scheduled time
+                        self.redis.zadd(cron_key.clone(), task_id.as_str().into(), next_time).await?;
+                        tracing::debug!("Cron task {} rescheduled for {}", task_id, next_time);
+                    } else {
+                        tracing::warn!("Could not calculate next time for cron task {}", task_id);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Calculate the next scheduled time for a cron expression
+    fn calculate_next_cron_time(&self, cron_expr: &str, from_timestamp: i64) -> Option<i64> {
+        use cron::Schedule;
+
+        // Parse the cron expression
+        let schedule = Schedule::try_from(cron_expr).ok()?;
+
+        // Convert timestamp to DateTime
+        let from_datetime = chrono::DateTime::from_timestamp(from_timestamp, 0)?;
+
+        // Get next occurrence using upcoming() iterator
+        let timezone = from_datetime.timezone();
+        schedule.upcoming(timezone).next().map(|dt| dt.timestamp())
     }
 }
 

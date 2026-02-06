@@ -137,6 +137,45 @@ impl Client {
         Ok(task_id)
     }
 
+    /// Enqueue a cron (periodic) task
+    ///
+    /// Cron tasks are scheduled to run periodically based on a cron expression.
+    /// Supported cron format: standard 5-field or 6-field (with seconds) format.
+    pub async fn enqueue_cron(&self, task: Task) -> Result<String> {
+        let task_id = task.id.clone();
+        let queue = task.queue.clone();
+        let cron_expr = task.options.cron.clone()
+            .ok_or(Error::Validation("Cron task must have cron expression".into()))?;
+
+        // Validate cron expression
+        use cron::Schedule;
+        Schedule::try_from(cron_expr.as_str())
+            .map_err(|e| Error::Validation(format!("Invalid cron expression: {}", e)))?;
+
+        // Calculate first scheduled time
+        let schedule = Schedule::try_from(cron_expr.as_str())
+            .map_err(|e| Error::Validation(format!("Invalid cron expression: {}", e)))?;
+        let now = chrono::Utc::now();
+        let next_time = schedule.upcoming(chrono::Utc::now().timezone()).next()
+            .ok_or(Error::Validation("Could not calculate next scheduled time".into()))?
+            .timestamp();
+
+        // Serialize task
+        let task_data = rmp_serde::to_vec(&task)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        // Store task details
+        let task_key: RedisKey = Keys::task(&task_id).into();
+        self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+
+        // Add to cron queue (score = next scheduled time)
+        let cron_key: RedisKey = Keys::cron_queue(&queue).into();
+        self.redis.zadd(cron_key, task_id.as_str().into(), next_time).await?;
+
+        tracing::debug!("Cron task enqueued: {} (cron: {}, next: {})", task_id, cron_expr, next_time);
+        Ok(task_id)
+    }
+
     /// Batch enqueue
     pub async fn enqueue_batch(&self, tasks: Vec<Task>) -> Result<Vec<String>> {
         let mut task_ids = Vec::with_capacity(tasks.len());

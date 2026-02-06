@@ -23,6 +23,13 @@ impl Keys {
         format!("{}:pqueue:{}", PREFIX, queue_name)
     }
 
+    /// Cron Schedule Key (ZSet)
+    /// Stores cron tasks with next scheduled time as score
+    /// Example: rediq:cron:default
+    pub fn cron_queue(queue_name: &str) -> String {
+        format!("{}:cron:{}", PREFIX, queue_name)
+    }
+
     /// Active task queue Key (List)
     /// Example: rediq:active:default
     pub fn active(queue_name: &str) -> String {
@@ -102,6 +109,7 @@ mod tests {
     fn test_key_formats() {
         assert_eq!(Keys::queue("default"), "rediq:queue:default");
         assert_eq!(Keys::priority_queue("default"), "rediq:pqueue:default");
+        assert_eq!(Keys::cron_queue("default"), "rediq:cron:default");
         assert_eq!(Keys::active("default"), "rediq:active:default");
         assert_eq!(Keys::delayed("default"), "rediq:delayed:default");
         assert_eq!(Keys::retry("default"), "rediq:retry:default");

@@ -30,6 +30,7 @@ anyhow = { workspace = true }
 # 工具
 uuid = { workspace = true }
 chrono = { workspace = true }
+cron = { workspace = true }
 
 # 可观测性
 tracing = { workspace = true }
@@ -72,3 +73,7 @@ path = "../examples/metrics_http_example.rs"
 [[example]]
 name = "priority_queue_example"
 path = "../examples/priority_queue_example.rs"
+
+[[example]]
+name = "cron_example"
+path = "../examples/cron_example.rs"

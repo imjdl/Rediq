@@ -30,6 +30,7 @@ anyhow = "1.0"
 # 工具
 uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+cron = { version = "0.12" }
 
 # 可观测性
 tracing = "0.1"
