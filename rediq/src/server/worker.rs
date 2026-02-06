@@ -406,8 +406,6 @@ impl Worker {
     /// Called when a task completes successfully. Checks if any tasks were waiting for
     /// this task and enqueues them if all their dependencies are satisfied.
     async fn check_dependent_tasks(&self, completed_task_id: &str) -> Result<()> {
-        use fred::prelude::RedisValue;
-
         // Get tasks that depend on the completed task
         let task_deps_key: RedisKey = Keys::task_deps(completed_task_id).into();
         let dependents = self.state.redis.smembers(task_deps_key.clone()).await?;
@@ -503,8 +501,6 @@ pub struct WorkerMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_next_queue_round_robin() {
         // This is a basic structural test

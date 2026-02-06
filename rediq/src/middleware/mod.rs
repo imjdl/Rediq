@@ -11,12 +11,12 @@ use std::sync::Arc;
 #[async_trait]
 pub trait Middleware: Send + Sync {
     /// Called before task processing
-    async fn before(&self, task: &Task) -> Result<()> {
+    async fn before(&self, _task: &Task) -> Result<()> {
         Ok(())
     }
 
     /// Called after task processing
-    async fn after(&self, task: &Task, result: &Result<()>) -> Result<()> {
+    async fn after(&self, _task: &Task, _result: &Result<()>) -> Result<()> {
         Ok(())
     }
 }

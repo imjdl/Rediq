@@ -33,10 +33,12 @@ pub struct RediqMetrics {
     queue_dead_tasks: IntGaugeVec,
 
     // Worker gauges
+    #[allow(dead_code)]
     worker_active_tasks: IntGaugeVec,
     worker_heartbeat: IntGaugeVec,
 
     // Processing metrics
+    #[allow(dead_code)]
     processing_duration_seconds: Histogram,
 }
 

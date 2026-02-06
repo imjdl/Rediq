@@ -12,9 +12,13 @@ use rmp_serde;
 /// Client configuration
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// Redis connection URL
     pub redis_url: String,
+    /// Redis connection mode
     pub redis_mode: RedisMode,
+    /// Connection pool size
     pub pool_size: usize,
+    /// Default queue name
     pub default_queue: String,
 }
 
@@ -35,6 +39,7 @@ impl Default for ClientConfig {
 #[derive(Clone)]
 pub struct Client {
     redis: RedisClient,
+    #[allow(dead_code)]
     config: ClientConfig,
 }
 
@@ -179,7 +184,6 @@ impl Client {
         // Calculate first scheduled time
         let schedule = Schedule::try_from(cron_expr.as_str())
             .map_err(|e| Error::Validation(format!("Invalid cron expression: {}", e)))?;
-        let now = chrono::Utc::now();
         let next_time = schedule.upcoming(chrono::Utc::now().timezone()).next()
             .ok_or(Error::Validation("Could not calculate next scheduled time".into()))?
             .timestamp();
@@ -395,7 +399,6 @@ impl ClientBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn test_client_builder() {

@@ -172,37 +172,59 @@ impl Inspector {
 /// Task information
 #[derive(Debug, Clone, Deserialize)]
 pub struct TaskInfo {
+    /// Task ID
     pub id: String,
+    /// Task type
     pub task_type: String,
+    /// Queue name
     pub queue: String,
+    /// Task status
     pub status: TaskStatus,
+    /// Retry count
     pub retry_cnt: u32,
+    /// Last error message
     pub last_error: Option<String>,
+    /// Creation timestamp
     pub created_at: i64,
+    /// Enqueue timestamp
     pub enqueued_at: Option<i64>,
+    /// Processed timestamp
     pub processed_at: Option<i64>,
 }
 
 /// Queue statistics
 #[derive(Debug, Clone)]
 pub struct QueueStats {
+    /// Queue name
     pub name: String,
+    /// Pending tasks count
     pub pending: u64,
+    /// Active tasks count
     pub active: u64,
+    /// Delayed tasks count
     pub delayed: u64,
+    /// Retry tasks count
     pub retried: u64,
+    /// Dead tasks count
     pub dead: u64,
 }
 
 /// Worker information
 #[derive(Debug, Clone)]
 pub struct WorkerInfo {
+    /// Worker ID
     pub id: String,
+    /// Server name
     pub server_name: String,
+    /// Assigned queues
     pub queues: Vec<String>,
+    /// Start timestamp
     pub started_at: i64,
+    /// Last heartbeat timestamp
     pub last_heartbeat: i64,
+    /// Total processed tasks
     pub processed_total: u64,
+    /// Worker status
     pub status: String,
 }
 

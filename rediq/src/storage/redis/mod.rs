@@ -426,6 +426,7 @@ impl RedisClient {
 
 /// Redis Pipeline
 pub struct RedisPipeline {
+    #[allow(dead_code)]
     pool: Arc<RedisPool>,
     commands: Vec<String>,
 }
