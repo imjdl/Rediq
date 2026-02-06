@@ -20,6 +20,7 @@ use rediq::Task;
 use async_trait::async_trait;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -57,7 +58,7 @@ struct Args {
 
     /// Redis URL
     #[arg(long, default_value = "redis://localhost:6379")]
-    redis_url: String,
+    redis_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -88,6 +89,11 @@ impl Handler for BenchmarkHandler {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    // Resolve Redis URL from environment variable if not provided
+    let redis_url = args.redis_url.unwrap_or_else(|| {
+        env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string())
+    });
+
     // Initialize tracing (minimal for benchmark)
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -105,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Queues:         {}", args.queues);
     println!("  Priority:       {}", args.priority);
     println!("  Payload size:   {}KB", args.payload_size);
-    println!("  Redis URL:      {}", args.redis_url);
+    println!("  Redis URL:      {}", redis_url);
     println!();
 
     let processed = Arc::new(AtomicU64::new(0));
@@ -120,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let state = ServerBuilder::new()
-        .redis_url(&args.redis_url)
+        .redis_url(&redis_url)
         .queues(&queue_names.iter().map(|s| s.as_str()).collect::<Vec<_>>())
         .concurrency(args.workers)
         .build()
@@ -145,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create client
     let client = Client::builder()
-        .redis_url(&args.redis_url)
+        .redis_url(&redis_url)
         .build()
         .await?;
 
