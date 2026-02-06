@@ -424,8 +424,11 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
     f.render_widget(ops_paragraph, right_chunks[0]);
 
     // Simple gauge for worker health
+    // Workers are considered healthy if they're registered (status is "idle" or "active")
     let worker_ratio = if !state.workers.is_empty() {
-        let active = state.workers.iter().filter(|w| w.status == "Active").count() as f64;
+        let active = state.workers.iter()
+            .filter(|w| w.status == "idle" || w.status.to_lowercase() == "active")
+            .count() as f64;
         active / state.workers.len() as f64
     } else {
         0.0
