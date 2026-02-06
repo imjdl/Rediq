@@ -2,6 +2,10 @@
 //!
 //! Provides Prometheus metrics, distributed tracing and structured logging
 
+pub mod metrics;
+
+pub use metrics::RediqMetrics;
+
 /// Prometheus metrics collector
 pub struct Metrics {}
 
