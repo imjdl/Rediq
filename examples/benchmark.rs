@@ -183,6 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let mut builder = Task::builder(queue.clone())
+                .queue(queue.clone())
                 .payload(&data)?
                 .max_retry(3)
                 .timeout(Duration::from_secs(30));
