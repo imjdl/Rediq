@@ -45,6 +45,7 @@ metrics-http = ["warp"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
 
 [[example]]
 name = "quickstart"
@@ -89,3 +90,7 @@ path = "../examples/sentinel_example.rs"
 [[example]]
 name = "dependency_example"
 path = "../examples/dependency_example.rs"
+
+[[example]]
+name = "benchmark"
+path = "../examples/benchmark.rs"
