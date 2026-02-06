@@ -47,3 +47,7 @@ path = "../examples/quickstart.rs"
 [[example]]
 name = "auto_test"
 path = "../examples/auto_test.rs"
+
+[[example]]
+name = "batch_test"
+path = "../examples/batch_test.rs"

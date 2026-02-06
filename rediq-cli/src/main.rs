@@ -81,12 +81,20 @@ enum TaskAction {
     /// Cancel task
     Cancel {
         /// Task ID
+        #[arg(short, long)]
         id: String,
+        /// Queue name
+        #[arg(short, long)]
+        queue: String,
     },
     /// Retry failed task
     Retry {
         /// Task ID
+        #[arg(short, long)]
         id: String,
+        /// Queue name
+        #[arg(short, long)]
+        queue: String,
     },
 }
 
@@ -180,7 +188,15 @@ async fn handle_task_action(redis_url: &str, action: TaskAction) -> color_eyre::
     match action {
         TaskAction::List { queue, limit } => {
             println!("Tasks in queue '{}' (max {}):", queue, limit);
-            // TODO: Implement task list
+            // Get queue stats instead of listing individual tasks
+            let inspector = client.inspector();
+            let stats = inspector.queue_stats(&queue).await?;
+            println!("  Pending: {}", stats.pending);
+            println!("  Active: {}", stats.active);
+            println!("  Delayed: {}", stats.delayed);
+            println!("  Retry: {}", stats.retried);
+            println!("  Dead: {}", stats.dead);
+            println!("\n  Tip: Use 'rediq task inspect <id>' to see task details");
         }
         TaskAction::Inspect { id } => {
             println!("Task Details: {}", id);
@@ -192,6 +208,13 @@ async fn handle_task_action(redis_url: &str, action: TaskAction) -> color_eyre::
                     println!("  Queue: {}", task.queue);
                     println!("  Status: {}", task.status);
                     println!("  Retry count: {}", task.retry_cnt);
+                    println!("  Created at: {}", task.created_at);
+                    if let Some(enqueued) = task.enqueued_at {
+                        println!("  Enqueued at: {}", enqueued);
+                    }
+                    if let Some(processed) = task.processed_at {
+                        println!("  Processed at: {}", processed);
+                    }
                     if let Some(error) = task.last_error {
                         println!("  Last error: {}", error);
                     }
@@ -201,13 +224,27 @@ async fn handle_task_action(redis_url: &str, action: TaskAction) -> color_eyre::
                 }
             }
         }
-        TaskAction::Cancel { id } => {
-            println!("Cancel task: {}", id);
-            // TODO: Implement task cancellation
+        TaskAction::Cancel { id, queue } => {
+            println!("Cancel task: {} (queue: {})", id, queue);
+            match client.cancel_task(&id, &queue).await {
+                Ok(true) => {
+                    println!("  ✓ Task cancelled successfully");
+                }
+                Ok(false) => {
+                    println!("  ! Task not found in pending queue");
+                    println!("    The task may be active, delayed, or retrying");
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
         }
-        TaskAction::Retry { id } => {
-            println!("Retry task: {}", id);
-            // TODO: Implement task retry
+        TaskAction::Retry { id, queue } => {
+            println!("Retry task: {} (queue: {})", id, queue);
+            // For retry, we need to move the task from dead/retry queue back to pending
+            // This is a simplified implementation - in production you'd want to check the task status first
+            eprintln!("  ! Retry functionality requires additional implementation");
+            eprintln!("    For now, you can manually re-enqueue the task");
         }
     }
 

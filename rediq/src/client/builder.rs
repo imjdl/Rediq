@@ -160,6 +160,47 @@ impl Client {
         tracing::info!("Queue '{}' flushed, {} tasks removed", queue_name, count);
         Ok(count)
     }
+
+    /// Cancel a task
+    ///
+    /// Attempts to cancel a task by removing it from the queue.
+    /// Returns true if the task was found and cancelled, false otherwise.
+    pub async fn cancel_task(&self, task_id: &str, queue_name: &str) -> Result<bool> {
+        // Try to remove from pending queue
+        let queue_key: RedisKey = Keys::queue(queue_name).into();
+        let removed = self.redis.lrem(queue_key, task_id.into(), 1).await?;
+
+        if removed > 0 {
+            // Task was in pending queue, clean up
+            // Delete task details
+            let task_key: RedisKey = Keys::task(task_id).into();
+            self.redis.del(vec![task_key]).await?;
+
+            tracing::info!("Task '{}' cancelled from queue '{}'", task_id, queue_name);
+            Ok(true)
+        } else {
+            // Task not found in pending queue
+            // It might be in active, delayed, or retry queues
+            // For now, we only support cancelling pending tasks
+            tracing::warn!("Task '{}' not found in pending queue '{}'", task_id, queue_name);
+            Ok(false)
+        }
+    }
+
+    /// Cancel a task with deduplication key cleanup
+    ///
+    /// Cancels a task and removes its unique key from the deduplication set.
+    pub async fn cancel_task_with_unique(&self, task_id: &str, queue_name: &str, unique_key: Option<&str>) -> Result<bool> {
+        let cancelled = self.cancel_task(task_id, queue_name).await?;
+
+        if cancelled && unique_key.is_some() {
+            // Remove from deduplication set
+            let dedup_key: RedisKey = Keys::dedup(queue_name).into();
+            self.redis.srem(dedup_key, unique_key.unwrap().into()).await?;
+        }
+
+        Ok(cancelled)
+    }
 }
 
 /// Client builder
