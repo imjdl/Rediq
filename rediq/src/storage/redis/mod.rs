@@ -292,6 +292,12 @@ impl RedisClient {
         Ok(result)
     }
 
+    /// List operation: get range by index
+    pub async fn lrange(&self, key: RedisKey, start: i64, stop: i64) -> Result<Vec<String>> {
+        let result: Vec<RedisValue> = self.pool.lrange(key, start, stop).await?;
+        Ok(result.into_iter().filter_map(|v| v.as_string().map(|s| s.to_string())).collect())
+    }
+
     /// Sorted Set operation: add
     pub async fn zadd(&self, key: RedisKey, member: RedisValue, score: i64) -> Result<()> {
         let values: Vec<(f64, RedisValue)> = vec![(score as f64, member)];

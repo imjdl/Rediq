@@ -7,7 +7,7 @@ pub mod worker;
 pub mod scheduler;
 
 pub use config::{ServerBuilder, ServerConfig, ServerState};
-pub use worker::Worker;
+pub use worker::{Worker, WorkerMetadata};
 pub use scheduler::Scheduler;
 
 use crate::{Error, Result};

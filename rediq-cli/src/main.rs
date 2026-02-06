@@ -187,16 +187,38 @@ async fn handle_task_action(redis_url: &str, action: TaskAction) -> color_eyre::
 
     match action {
         TaskAction::List { queue, limit } => {
-            println!("Tasks in queue '{}' (max {}):", queue, limit);
-            // Get queue stats instead of listing individual tasks
+            println!("Tasks in queue '{}' (showing max {}):", queue, limit);
             let inspector = client.inspector();
-            let stats = inspector.queue_stats(&queue).await?;
-            println!("  Pending: {}", stats.pending);
-            println!("  Active: {}", stats.active);
-            println!("  Delayed: {}", stats.delayed);
-            println!("  Retry: {}", stats.retried);
-            println!("  Dead: {}", stats.dead);
-            println!("\n  Tip: Use 'rediq task inspect <id>' to see task details");
+
+            // Get pending tasks
+            match inspector.list_tasks(&queue, limit).await {
+                Ok(tasks) => {
+                    if tasks.is_empty() {
+                        println!("  (No tasks in queue)");
+                    } else {
+                        println!("  Pending tasks:");
+                        for task in tasks {
+                            println!("    - {} [{}]", task.id, task.task_type);
+                            println!("      Status: {}", task.status);
+                            println!("      Retry: {}/{}", task.retry_cnt,
+                                std::cmp::max(0, 3 - task.retry_cnt as i32));
+                        }
+                    }
+
+                    // Show queue summary
+                    let stats = inspector.queue_stats(&queue).await?;
+                    println!("\n  Queue Summary:");
+                    println!("    Pending: {}", stats.pending);
+                    println!("    Active: {}", stats.active);
+                    println!("    Delayed: {}", stats.delayed);
+                    println!("    Retry: {}", stats.retried);
+                    println!("    Dead: {}", stats.dead);
+                    println!("\n  Tip: Use 'rediq task inspect <id>' to see task details");
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
         }
         TaskAction::Inspect { id } => {
             println!("Task Details: {}", id);
@@ -252,18 +274,64 @@ async fn handle_task_action(redis_url: &str, action: TaskAction) -> color_eyre::
 }
 
 async fn handle_worker_action(redis_url: &str, action: WorkerAction) -> color_eyre::Result<()> {
+    let client = Client::builder().redis_url(redis_url).build().await?;
+    let inspector = client.inspector();
+
     match action {
         WorkerAction::List => {
             println!("Worker List");
-            // TODO: Implement list functionality
+            match inspector.list_workers().await {
+                Ok(workers) => {
+                    if workers.is_empty() {
+                        println!("  (No workers registered)");
+                    } else {
+                        for worker in workers {
+                            println!("  - {}", worker.id);
+                            println!("    Server: {}", worker.server_name);
+                            println!("    Queues: {:?}", worker.queues.join(", "));
+                            println!("    Status: {}", worker.status);
+                            println!("    Processed: {}", worker.processed_total);
+                            println!();
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
         }
         WorkerAction::Inspect { id } => {
             println!("Worker Details: {}", id);
-            // TODO: Implement details functionality
+            match inspector.get_worker(&id).await {
+                Ok(worker) => {
+                    println!("  ID: {}", worker.id);
+                    println!("  Server: {}", worker.server_name);
+                    println!("  Queues: {:?}", worker.queues);
+                    println!("  Status: {}", worker.status);
+                    println!("  Started at: {}", worker.started_at);
+                    println!("  Last heartbeat: {}", worker.last_heartbeat);
+                    println!("  Processed total: {}", worker.processed_total);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
         }
         WorkerAction::Stop { id } => {
             println!("Stop worker: {}", id);
-            // TODO: Implement stop functionality
+            match inspector.stop_worker(&id).await {
+                Ok(true) => {
+                    println!("  ✓ Worker shutdown signal sent");
+                    println!("    The worker will finish its current task and exit");
+                }
+                Ok(false) => {
+                    println!("  ! Worker not found");
+                    println!("    The worker may have already exited");
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                }
+            }
         }
     }
 

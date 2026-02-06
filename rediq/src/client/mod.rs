@@ -87,6 +87,86 @@ impl Inspector {
         // TODO: Implement getting queue list from SMEMBERS
         Ok(Vec::new())
     }
+
+    /// List tasks in a queue
+    pub async fn list_tasks(&self, queue_name: &str, limit: usize) -> Result<Vec<TaskInfo>> {
+        let queue_key: RedisKey = Keys::queue(queue_name).into();
+        let queue_len = self.redis.llen(queue_key.clone()).await?;
+
+        let actual_limit = queue_len.min(limit as u64) as usize;
+        if actual_limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Get task IDs from queue
+        let task_ids = self.redis.lrange(queue_key, 0, actual_limit as i64 - 1).await?;
+
+        let mut tasks = Vec::new();
+        for task_id in task_ids {
+            if let Ok(task_info) = self.get_task(&task_id).await {
+                tasks.push(task_info);
+            }
+        }
+
+        Ok(tasks)
+    }
+
+    /// List all workers
+    pub async fn list_workers(&self) -> Result<Vec<WorkerInfo>> {
+        let key: RedisKey = Keys::meta_workers().into();
+        let members = self.redis.smembers(key).await?;
+
+        let mut workers = Vec::new();
+        for worker_id in members {
+            if let Ok(info) = self.get_worker(&worker_id).await {
+                workers.push(info);
+            }
+        }
+
+        Ok(workers)
+    }
+
+    /// Get worker details
+    pub async fn get_worker(&self, worker_id: &str) -> Result<WorkerInfo> {
+        let worker_key: RedisKey = Keys::meta_worker(worker_id).into();
+        let data = self.redis.get(worker_key).await?;
+
+        if let Some(data) = data {
+            let bytes = data.as_bytes()
+                .ok_or_else(|| Error::Serialization("Worker data is not bytes".into()))?;
+
+            let metadata: crate::server::worker::WorkerMetadata = rmp_serde::from_slice(bytes)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+
+            Ok(WorkerInfo {
+                id: metadata.id,
+                server_name: metadata.server_name,
+                queues: metadata.queues,
+                started_at: metadata.started_at,
+                last_heartbeat: metadata.last_heartbeat,
+                processed_total: metadata.processed_total,
+                status: metadata.status,
+            })
+        } else {
+            Err(Error::TaskNotFound(format!("Worker {} not found", worker_id)))
+        }
+    }
+
+    /// Stop a worker by deleting its heartbeat
+    ///
+    /// This signals the worker to shut down gracefully.
+    pub async fn stop_worker(&self, worker_id: &str) -> Result<bool> {
+        let heartbeat_key: RedisKey = Keys::meta_heartbeat(worker_id).into();
+        let exists = self.redis.exists(heartbeat_key.clone()).await?;
+
+        if exists {
+            // Delete heartbeat to signal shutdown
+            self.redis.del(vec![heartbeat_key]).await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 /// Task information
@@ -112,6 +192,18 @@ pub struct QueueStats {
     pub delayed: u64,
     pub retried: u64,
     pub dead: u64,
+}
+
+/// Worker information
+#[derive(Debug, Clone)]
+pub struct WorkerInfo {
+    pub id: String,
+    pub server_name: String,
+    pub queues: Vec<String>,
+    pub started_at: i64,
+    pub last_heartbeat: i64,
+    pub processed_total: u64,
+    pub status: String,
 }
 
 #[cfg(test)]
