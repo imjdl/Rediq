@@ -16,6 +16,7 @@ use ratatui::{
 };
 use rediq::client::Client;
 use std::time::{Duration, Instant};
+use chrono::Local;
 
 pub struct DashboardState {
     queues: Vec<QueueStats>,
@@ -192,23 +193,36 @@ async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut Dashboar
 fn ui(f: &mut Frame, state: &DashboardState) {
     let area = f.area();
 
-    // Title bar
+    // Title bar with timestamp and total processed
+    let time_str = Local::now().format("%H:%M:%S").to_string();
+    let elapsed = state.last_update.elapsed().as_millis();
+    let ago_str = if elapsed < 1000 {
+        format!("{}ms ago", elapsed)
+    } else {
+        format!("{}s ago", elapsed / 1000)
+    };
+
     let title = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Rediq", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(" Dashboard "),
-            Span::styled("(Press 'q' to quit)", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("Updated: {} ({})", time_str, ago_str), Style::default().fg(Color::DarkGray)),
+            Span::raw(" "),
+            Span::styled(format!("Total Processed: {}", state.total_processed), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("Press 'q' to quit | ↑↓ to select queue", Style::default().fg(Color::DarkGray)),
         ]),
     ])
     .block(Block::default().borders(Borders::ALL));
-    f.render_widget(title, Rect { x: 0, y: 0, width: area.width, height: 3 });
+    f.render_widget(title, Rect { x: 0, y: 0, width: area.width, height: 4 });
 
     // Main layout
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([Constraint::Length(area.height - 11), Constraint::Length(8)].as_ref())
-        .split(Rect { x: 0, y: 3, width: area.width, height: area.height - 3 });
+        .constraints([Constraint::Length(area.height - 12), Constraint::Length(8)].as_ref())
+        .split(Rect { x: 0, y: 4, width: area.width, height: area.height - 4 });
 
     // Upper section - queues and workers side by side
     let upper_chunks = Layout::default()
@@ -348,27 +362,33 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
         let total_delayed: u64 = state.queues.iter().map(|q| q.delayed).sum();
         let total_retry: u64 = state.queues.iter().map(|q| q.retry).sum();
         let total_dead: u64 = state.queues.iter().map(|q| q.dead).sum();
+        let total_in_queues: u64 = total_pending + total_active + total_delayed + total_retry;
 
         vec![
             Line::from(vec![
-                Span::styled("Total Pending: ", Style::default().fg(Color::White)),
-                Span::styled(total_pending.to_string(), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("In Queues:      ", Style::default().fg(Color::White)),
+                Span::styled(total_in_queues.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(vec![
-                Span::styled("Total Active:   ", Style::default().fg(Color::White)),
-                Span::styled(total_active.to_string(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("├ Pending:     ", Style::default().fg(Color::White)),
+                Span::styled(total_pending.to_string(), Style::default().fg(Color::Green)),
+                Span::raw("  "),
+                Span::styled("Active: ", Style::default().fg(Color::White)),
+                Span::styled(total_active.to_string(), Style::default().fg(Color::Yellow)),
             ]),
             Line::from(vec![
-                Span::styled("Total Delayed:  ", Style::default().fg(Color::White)),
-                Span::styled(total_delayed.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("├ Delayed:     ", Style::default().fg(Color::White)),
+                Span::styled(total_delayed.to_string(), Style::default().fg(Color::Cyan)),
+                Span::raw("  "),
+                Span::styled("Retry:  ", Style::default().fg(Color::White)),
+                Span::styled(total_retry.to_string(), Style::default().fg(Color::Magenta)),
             ]),
             Line::from(vec![
-                Span::styled("Total Retry:    ", Style::default().fg(Color::White)),
-                Span::styled(total_retry.to_string(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled("Total Dead:     ", Style::default().fg(Color::White)),
-                Span::styled(total_dead.to_string(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("└ Dead:        ", Style::default().fg(Color::White)),
+                Span::styled(total_dead.to_string(), Style::default().fg(Color::Red)),
+                Span::raw("  "),
+                Span::styled("Processed: ", Style::default().fg(Color::White)),
+                Span::styled(state.total_processed.to_string(), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             ]),
         ]
     } else {
