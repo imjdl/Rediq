@@ -36,6 +36,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 prometheus = "0.13"
 metrics = "0.21"
+warp = { version = "0.3" }
 
 # 配置
 config = "0.13"

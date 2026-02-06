@@ -99,6 +99,16 @@ impl Mux {
     /// # Example
     ///
     /// ```rust
+    /// # use rediq::processor::{Handler, Mux};
+    /// # use async_trait::async_trait;
+    /// # struct EmailHandler;
+    /// # #[async_trait]
+    /// # impl Handler for EmailHandler {
+    /// #     async fn handle(&self, task: &rediq::Task) -> rediq::Result<()> {
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// let mut mux = Mux::new();
     /// mux.handle("email:send", EmailHandler);
     /// ```
     pub fn handle<H: Handler + 'static>(&mut self, task_type: &str, handler: H) {

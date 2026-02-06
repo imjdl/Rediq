@@ -3,9 +3,12 @@
 //! Provides Task struct and TaskBuilder for building and serializing tasks.
 
 use crate::{Error, Result};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+#[allow(unused_imports)]
+use chrono::Utc;
+#[allow(unused_imports)]
 use uuid::Uuid;
 
 pub mod builder;

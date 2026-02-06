@@ -36,6 +36,11 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 prometheus = { workspace = true }
 metrics = { workspace = true }
+warp = { version = "0.3", optional = true }
+
+[features]
+default = []
+metrics-http = ["warp"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -59,3 +64,7 @@ path = "../examples/middleware_test.rs"
 [[example]]
 name = "metrics_test"
 path = "../examples/metrics_test.rs"
+
+[[example]]
+name = "metrics_http_example"
+path = "../examples/metrics_http_example.rs"

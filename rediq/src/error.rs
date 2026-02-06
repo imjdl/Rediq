@@ -50,6 +50,10 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// Observability/metrics errors
+    #[error("Metrics error: {0}")]
+    Metrics(String),
+
     /// Shutdown requested
     #[error("Shutdown requested")]
     Shutdown,

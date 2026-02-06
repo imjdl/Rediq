@@ -3,7 +3,7 @@
 //! Provides task processing metrics for monitoring and observability.
 
 use prometheus::{
-    Counter, CounterVec, Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
+    Histogram, HistogramVec, IntCounterVec, IntGaugeVec,
     Registry, TextEncoder, Opts, HistogramOpts,
 };
 use std::sync::Arc;

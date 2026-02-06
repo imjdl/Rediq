@@ -12,6 +12,8 @@ pub use scheduler::Scheduler;
 
 use crate::{Error, Result};
 use crate::processor::Mux;
+use crate::observability::RediqMetrics;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +30,7 @@ use tokio::task::JoinSet;
 /// # Example
 ///
 /// ```rust
-/// use rediq::server::ServerBuilder;
+/// use rediq::server::{Server, ServerBuilder};
 /// use rediq::processor::{Handler, Mux};
 /// use async_trait::async_trait;
 ///
@@ -41,12 +43,14 @@ use tokio::task::JoinSet;
 /// # }
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Build server
-/// let server = ServerBuilder::new()
+/// let state = ServerBuilder::new()
 ///     .redis_url("redis://localhost:6379")
 ///     .queues(&["default", "critical"])
 ///     .concurrency(10)
 ///     .build()
 ///     .await?;
+///
+/// let server = Server::from(state);
 ///
 /// // Register handlers
 /// let mut mux = Mux::new();
@@ -67,6 +71,12 @@ pub struct Server {
 
     /// Active worker count
     worker_count: Arc<AtomicUsize>,
+
+    /// Metrics collector
+    metrics: Option<Arc<RediqMetrics>>,
+
+    /// Metrics HTTP bind address
+    metrics_bind_address: Option<SocketAddr>,
 }
 
 impl Server {
@@ -76,7 +86,44 @@ impl Server {
             state: Arc::new(state),
             shutdown: Arc::new(AtomicBool::new(false)),
             worker_count: Arc::new(AtomicUsize::new(0)),
+            metrics: None,
+            metrics_bind_address: None,
         }
+    }
+
+    /// Enable metrics collection with HTTP endpoint
+    ///
+    /// This enables Prometheus metrics collection and starts an HTTP server
+    /// on the specified address for the `/metrics` endpoint.
+    ///
+    /// # Arguments
+    /// * `bind_address` - Address to bind the metrics server (e.g., "0.0.0.0:9090")
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::server::{Server, ServerBuilder};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let state = ServerBuilder::new()
+    ///     .redis_url("redis://localhost:6379")
+    ///     .queues(&["default"])
+    ///     .build()
+    ///     .await?;
+    ///
+    /// let mut server = Server::from(state);
+    /// server.enable_metrics("0.0.0.0:9090".parse::<std::net::SocketAddr>().unwrap())?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_metrics(&mut self, bind_address: impl Into<SocketAddr>) -> Result<()> {
+        let metrics = RediqMetrics::new()
+            .map_err(|e| Error::Metrics(e.to_string()))?;
+        self.metrics = Some(Arc::new(metrics));
+        self.metrics_bind_address = Some(bind_address.into());
+        tracing::info!("Metrics enabled on http://{}", self.metrics_bind_address.as_ref().unwrap());
+        tracing::info!("Metrics endpoint: http://{}/metrics", self.metrics_bind_address.as_ref().unwrap());
+        Ok(())
     }
 
     /// Run the server
@@ -100,6 +147,23 @@ impl Server {
         let mux = Arc::new(tokio::sync::Mutex::new(mux));
         let mut join_set = JoinSet::new();
 
+        // Start metrics HTTP server if enabled
+        #[cfg(feature = "metrics-http")]
+        if let (Some(metrics), Some(bind_address)) = (self.metrics.clone(), self.metrics_bind_address) {
+            use crate::observability::http_server::MetricsServer;
+            let metrics_server = MetricsServer::new(metrics, bind_address);
+            let metrics_server_shutdown = self.shutdown.clone();
+
+            join_set.spawn(async move {
+                let result = metrics_server.run().await;
+                // Signal shutdown if metrics server exits
+                metrics_server_shutdown.store(true, Ordering::SeqCst);
+                result
+            });
+
+            tracing::info!("Metrics HTTP server started on http://{}", bind_address);
+        }
+
         // Start scheduler if enabled
         if self.state.config.enable_scheduler {
             let scheduler = Scheduler::new(
@@ -108,7 +172,7 @@ impl Server {
             );
 
             let scheduler_shutdown = self.shutdown.clone();
-            let scheduler_handle = tokio::spawn(async move {
+            tokio::spawn(async move {
                 let result = scheduler.run().await;
                 // Signal shutdown on scheduler exit
                 scheduler_shutdown.store(true, Ordering::SeqCst);
@@ -123,7 +187,7 @@ impl Server {
         // Create and start workers
         for i in 0..self.state.config.concurrency {
             let worker = self.create_worker(i, mux.clone())?;
-            let shutdown = self.shutdown.clone();
+            let _shutdown = self.shutdown.clone();
             let count = self.worker_count.clone();
 
             count.fetch_add(1, Ordering::Relaxed);

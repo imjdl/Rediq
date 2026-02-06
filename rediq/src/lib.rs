@@ -13,39 +13,49 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use rediq::client::{Client, TaskBuilder};
-//! use rediq::server::{Server, Mux};
+//! use rediq::client::Client;
+//! use rediq::processor::{Handler, Mux};
+//! use rediq::server::{Server, ServerBuilder};
+//! use rediq::task::TaskBuilder;
+//! use async_trait::async_trait;
 //! use std::time::Duration;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Client side: create and enqueue tasks
-//!     let client = Client::builder()
-//!         .redis_url("redis://localhost:6379")
-//!         .build()
-//!         .await?;
+//! # struct EmailHandler;
+//! # #[async_trait]
+//! # impl Handler for EmailHandler {
+//! #     async fn handle(&self, task: &rediq::Task) -> rediq::Result<()> {
+//! #         Ok(())
+//! #     }
+//! # }
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Client side: create and enqueue tasks
+//! let client = Client::builder()
+//!     .redis_url("redis://localhost:6379")
+//!     .build()
+//!     .await?;
 //!
-//!     let task = Task::builder("email:send")
-//!         .queue("default")
-//!         .payload(&email_data)?
-//!         .max_retry(5)
-//!         .build()?;
+//! # let email_data = serde_json::json!({"to": "user@example.com"});
+//! let task = TaskBuilder::new("email:send")
+//!     .queue("default")
+//!     .payload(&email_data)?
+//!     .max_retry(5)
+//!     .build()?;
 //!
-//!     client.enqueue(task).await?;
+//! client.enqueue(task).await?;
 //!
-//!     // Server side: process tasks
-//!     let mut server = Server::builder()
-//!         .redis_url("redis://localhost:6379")
-//!         .queues(&["default"])
-//!         .build()
-//!         .await?;
+//! // Server side: process tasks
+//! let state = ServerBuilder::new()
+//!     .redis_url("redis://localhost:6379")
+//!     .queues(&["default"])
+//!     .build()
+//!     .await?;
 //!
-//!     let mut mux = Mux::new();
-//!     mux.handle("email:send", EmailHandler);
-//!     server.run(mux).await?;
-//!
-//!     Ok(())
-//! }
+//! let server = Server::from(state);
+//! let mut mux = Mux::new();
+//! mux.handle("email:send", EmailHandler);
+//! server.run(mux).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 #![warn(missing_docs)]

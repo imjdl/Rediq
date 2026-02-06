@@ -3,14 +3,8 @@
 //! Provides Prometheus metrics, distributed tracing and structured logging
 
 pub mod metrics;
+pub mod http_server;
 
 pub use metrics::RediqMetrics;
-
-/// Prometheus metrics collector
-pub struct Metrics {}
-
-/// Distributed tracing
-pub struct Tracing {}
-
-/// Structured logging
-pub struct Logging {}
+#[cfg(feature = "metrics-http")]
+pub use http_server::MetricsServer;
