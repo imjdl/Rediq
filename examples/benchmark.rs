@@ -297,7 +297,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("  Total tasks:        {}", args.tasks);
     println!("  Successfully:       {}", final_processed);
-    println!("  Failed:             {}", args.tasks as u64 - final_processed);
+
+    // Calculate failed count with proper handling
+    let failed = if final_processed <= args.tasks as u64 {
+        args.tasks as u64 - final_processed
+    } else {
+        // Processed more than enqueued (shouldn't happen, but handle gracefully)
+        0
+    };
+    println!("  Failed:             {}", failed);
     println!();
     println!("  Enqueue time:       {:.2}s", enqueue_duration.as_secs_f64());
     println!("  Process time:       {:.2}s", process_duration.as_secs_f64());

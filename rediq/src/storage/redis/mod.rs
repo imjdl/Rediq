@@ -391,6 +391,12 @@ impl RedisClient {
         Ok(result > 0)
     }
 
+    /// Hash operation: increment field by value
+    pub async fn hincrby(&self, key: RedisKey, field: RedisKey, increment: i64) -> Result<i64> {
+        let result: i64 = self.pool.hincrby(key, field, increment).await?;
+        Ok(result)
+    }
+
     /// Hash operation: get field
     pub async fn hget(&self, key: RedisKey, field: RedisKey) -> Result<Option<RedisValue>> {
         let result: Option<RedisValue> = self.pool.hget(key, field).await?;

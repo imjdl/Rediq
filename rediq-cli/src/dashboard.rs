@@ -35,6 +35,7 @@ struct QueueStats {
     delayed: u64,
     retry: u64,
     dead: u64,
+    completed: u64,
 }
 
 struct WorkerInfo {
@@ -156,6 +157,7 @@ async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut Dashboar
                     delayed: stats.delayed,
                     retry: stats.retried,
                     dead: stats.dead,
+                    completed: stats.completed,
                 });
             }
         }
@@ -262,6 +264,7 @@ fn draw_queues_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
                 Cell::from(q.delayed.to_string()).style(Style::default().fg(Color::Cyan)),
                 Cell::from(q.retry.to_string()).style(Style::default().fg(Color::Magenta)),
                 Cell::from(q.dead.to_string()).style(Style::default().fg(Color::Red)),
+                Cell::from(q.completed.to_string()).style(Style::default().fg(Color::Green)),
             ])
             .style(style)
         })
@@ -271,25 +274,27 @@ fn draw_queues_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
         rows,
         &[
             Constraint::Length(15),
+            Constraint::Length(7),
+            Constraint::Length(7),
             Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(10),
         ],
     )
     .header(
-        Row::new(vec!["Queue", "Pending", "Active", "Delayed", "Retry", "Dead"])
+        Row::new(vec!["Queue", "Pending", "Active", "Delayed", "Retry", "Dead", "Completed"])
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     )
     .block(Block::default().title(title).borders(Borders::ALL))
     .widths(&[
-        Constraint::Percentage(25),
-        Constraint::Percentage(15),
-        Constraint::Percentage(15),
-        Constraint::Percentage(15),
-        Constraint::Percentage(15),
-        Constraint::Percentage(15),
+        Constraint::Percentage(23),
+        Constraint::Percentage(13),
+        Constraint::Percentage(13),
+        Constraint::Percentage(14),
+        Constraint::Percentage(13),
+        Constraint::Percentage(13),
+        Constraint::Percentage(11),
     ]);
 
     f.render_widget(table, area);
@@ -362,6 +367,7 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
         let total_delayed: u64 = state.queues.iter().map(|q| q.delayed).sum();
         let total_retry: u64 = state.queues.iter().map(|q| q.retry).sum();
         let total_dead: u64 = state.queues.iter().map(|q| q.dead).sum();
+        let total_completed: u64 = state.queues.iter().map(|q| q.completed).sum();
         let total_in_queues: u64 = total_pending + total_active + total_delayed + total_retry;
 
         vec![
@@ -384,10 +390,14 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
                 Span::styled(total_retry.to_string(), Style::default().fg(Color::Magenta)),
             ]),
             Line::from(vec![
-                Span::styled("└ Dead:        ", Style::default().fg(Color::White)),
+                Span::styled("├ Dead:        ", Style::default().fg(Color::White)),
                 Span::styled(total_dead.to_string(), Style::default().fg(Color::Red)),
                 Span::raw("  "),
-                Span::styled("Processed: ", Style::default().fg(Color::White)),
+                Span::styled("Completed: ", Style::default().fg(Color::White)),
+                Span::styled(total_completed.to_string(), Style::default().fg(Color::Green)),
+            ]),
+            Line::from(vec![
+                Span::styled("└ Processed:   ", Style::default().fg(Color::White)),
                 Span::styled(state.total_processed.to_string(), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             ]),
         ]

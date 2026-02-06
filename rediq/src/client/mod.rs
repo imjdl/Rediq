@@ -69,6 +69,14 @@ impl Inspector {
         let retry = self.redis.zrangebyscore(retry_key, 0, i64::MAX).await?.len() as u64;
         let dead = self.redis.llen(dead_key).await?;
 
+        // Read completed count from queue stats
+        let stats_key: RedisKey = Keys::stats(queue_name).into();
+        let field_key: RedisKey = "processed".into();
+        let completed = match self.redis.hget(stats_key, field_key).await {
+            Ok(Some(value)) => value.as_string().and_then(|s| s.parse().ok()).unwrap_or(0),
+            _ => 0,
+        };
+
         Ok(QueueStats {
             name: queue_name.to_string(),
             pending,
@@ -76,6 +84,7 @@ impl Inspector {
             delayed: delayed as u64,
             retried: retry as u64,
             dead,
+            completed,
         })
     }
 
@@ -205,6 +214,8 @@ pub struct QueueStats {
     pub retried: u64,
     /// Dead tasks count
     pub dead: u64,
+    /// Completed tasks count
+    pub completed: u64,
 }
 
 /// Worker information

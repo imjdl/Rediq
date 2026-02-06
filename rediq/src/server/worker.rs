@@ -400,6 +400,10 @@ impl Worker {
         // Update worker processed_total on successful completion
         if status == TaskStatus::Processed {
             self.increment_processed().await?;
+            // Update queue statistics
+            let stats_key: RedisKey = Keys::stats(&task.queue).into();
+            let field_key: RedisKey = "processed".into();
+            let _ = self.state.redis.hincrby(stats_key, field_key, 1).await;
         }
 
         // If task was successfully processed, check for dependent tasks
