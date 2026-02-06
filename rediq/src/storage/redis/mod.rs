@@ -10,6 +10,21 @@ use fred::{
 };
 use std::sync::Arc;
 
+/// Redis connection mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedisMode {
+    /// Single Redis instance
+    Standalone,
+    /// Redis Cluster mode
+    Cluster,
+}
+
+impl Default for RedisMode {
+    fn default() -> Self {
+        Self::Standalone
+    }
+}
+
 /// Redis connection configuration
 #[derive(Debug, Clone)]
 pub struct RedisConfig {
@@ -17,6 +32,8 @@ pub struct RedisConfig {
     pub url: String,
     /// Connection pool size
     pub pool_size: usize,
+    /// Redis connection mode
+    pub mode: RedisMode,
 }
 
 impl Default for RedisConfig {
@@ -24,6 +41,7 @@ impl Default for RedisConfig {
         Self {
             url: "redis://localhost:6379".to_string(),
             pool_size: 10,
+            mode: RedisMode::Standalone,
         }
     }
 }
@@ -48,6 +66,15 @@ impl RedisClient {
 
         pool.init().await?;
 
+        match config.mode {
+            RedisMode::Standalone => {
+                tracing::info!("Connected to Redis at {}", config.url);
+            }
+            RedisMode::Cluster => {
+                tracing::info!("Connected to Redis Cluster at {}", config.url);
+            }
+        }
+
         Ok(Self {
             pool: Arc::new(pool),
         })
@@ -66,6 +93,60 @@ impl RedisClient {
         )?;
 
         pool.init().await?;
+
+        tracing::info!("Connected to Redis at {}", url);
+
+        Ok(Self {
+            pool: Arc::new(pool),
+        })
+    }
+
+    /// Create client from Redis Cluster URL
+    ///
+    /// fred will automatically discover cluster nodes.
+    /// Use any cluster node URL to connect.
+    ///
+    /// # Arguments
+    /// * `url` - Any cluster node URL (e.g., "redis://cluster-node1:6379")
+    pub async fn from_cluster_url(url: impl Into<String>) -> Result<Self> {
+        let url = url.into();
+        let redis_config = FredRedisConfig::from_url(&url)?;
+        let pool = RedisPool::new(
+            redis_config,
+            None,
+            None,
+            Some(ReconnectPolicy::default()),
+            10,
+        )?;
+
+        pool.init().await?;
+
+        tracing::info!("Connected to Redis Cluster at {}", url);
+
+        Ok(Self {
+            pool: Arc::new(pool),
+        })
+    }
+
+    /// Create client from Redis Cluster URL with custom pool size
+    ///
+    /// # Arguments
+    /// * `url` - Any cluster node URL
+    /// * `pool_size` - Connection pool size
+    pub async fn from_cluster_url_with_pool(url: impl Into<String>, pool_size: usize) -> Result<Self> {
+        let url = url.into();
+        let redis_config = FredRedisConfig::from_url(&url)?;
+        let pool = RedisPool::new(
+            redis_config,
+            None,
+            None,
+            Some(ReconnectPolicy::default()),
+            pool_size,
+        )?;
+
+        pool.init().await?;
+
+        tracing::info!("Connected to Redis Cluster at {} (pool size: {})", url, pool_size);
 
         Ok(Self {
             pool: Arc::new(pool),

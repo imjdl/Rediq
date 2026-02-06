@@ -1,7 +1,7 @@
 //! Client builder and enqueue implementation
 
 use crate::{
-    storage::{Keys, RedisClient},
+    storage::{Keys, RedisClient, RedisMode},
     Error, Result,
 };
 use crate::task::Task;
@@ -13,6 +13,7 @@ use rmp_serde;
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     pub redis_url: String,
+    pub redis_mode: RedisMode,
     pub pool_size: usize,
     pub default_queue: String,
 }
@@ -21,6 +22,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             redis_url: "redis://localhost:6379".to_string(),
+            redis_mode: RedisMode::Standalone,
             pool_size: 10,
             default_queue: "default".to_string(),
         }
@@ -296,6 +298,28 @@ impl ClientBuilder {
         self
     }
 
+    /// Set Redis connection mode to Cluster
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::client::Client;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::builder()
+    ///     .redis_url("redis://cluster-node1:6379")
+    ///     .cluster_mode()
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn cluster_mode(mut self) -> Self {
+        self.config.redis_mode = RedisMode::Cluster;
+        self
+    }
+
     /// Set connection pool size
     #[must_use]
     pub fn pool_size(mut self, size: usize) -> Self {
@@ -312,7 +336,10 @@ impl ClientBuilder {
 
     /// Build Client
     pub async fn build(self) -> Result<Client> {
-        let redis = RedisClient::from_url(&self.config.redis_url).await?;
+        let redis = match self.config.redis_mode {
+            RedisMode::Standalone => RedisClient::from_url(&self.config.redis_url).await?,
+            RedisMode::Cluster => RedisClient::from_cluster_url(&self.config.redis_url).await?,
+        };
         Ok(Client {
             redis,
             config: self.config,

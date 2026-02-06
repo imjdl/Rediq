@@ -6,4 +6,4 @@ pub mod keys;
 pub mod redis;
 
 pub use keys::Keys;
-pub use redis::RedisClient;
+pub use redis::{RedisClient, RedisConfig, RedisMode};

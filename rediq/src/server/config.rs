@@ -3,7 +3,7 @@
 //! Provides configuration structures for the Rediq server.
 
 use crate::{Error, Result};
-use crate::storage::RedisClient;
+use crate::storage::{RedisClient, RedisMode};
 use crate::middleware::MiddlewareChain;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -13,6 +13,9 @@ use uuid::Uuid;
 pub struct ServerConfig {
     /// Redis connection URL
     pub redis_url: String,
+
+    /// Redis connection mode
+    pub redis_mode: RedisMode,
 
     /// Queues to consume from
     pub queues: Vec<String>,
@@ -43,6 +46,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             redis_url: "redis://localhost:6379".to_string(),
+            redis_mode: RedisMode::Standalone,
             queues: vec!["default".to_string()],
             concurrency: 10,
             heartbeat_interval: 5,
@@ -119,6 +123,23 @@ impl ServerBuilder {
     #[must_use]
     pub fn redis_url(mut self, url: impl Into<String>) -> Self {
         self.config.redis_url = url.into();
+        self
+    }
+
+    /// Set Redis connection mode to Cluster
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rediq::server::ServerBuilder;
+    /// let builder = ServerBuilder::new()
+    ///     .redis_url("redis://cluster-node1:6379")
+    ///     .cluster_mode()
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn cluster_mode(mut self) -> Self {
+        self.config.redis_mode = RedisMode::Cluster;
         self
     }
 
@@ -225,12 +246,19 @@ impl ServerBuilder {
         }
 
         // Connect to Redis
-        let redis = RedisClient::from_url(&self.config.redis_url).await?;
+        let redis = match self.config.redis_mode {
+            RedisMode::Standalone => RedisClient::from_url(&self.config.redis_url).await?,
+            RedisMode::Cluster => RedisClient::from_cluster_url(&self.config.redis_url).await?,
+        };
 
         // Ping to verify connection
         redis.ping().await?;
 
-        tracing::info!("Connected to Redis: {}", self.config.redis_url);
+        let mode_str = match self.config.redis_mode {
+            RedisMode::Standalone => "Standalone",
+            RedisMode::Cluster => "Cluster",
+        };
+        tracing::info!("Connected to Redis ({}) at {}", mode_str, self.config.redis_url);
 
         Ok(ServerState {
             config: Arc::new(self.config),

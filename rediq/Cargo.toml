@@ -77,3 +77,7 @@ path = "../examples/priority_queue_example.rs"
 [[example]]
 name = "cron_example"
 path = "../examples/cron_example.rs"
+
+[[example]]
+name = "cluster_example"
+path = "../examples/cluster_example.rs"
