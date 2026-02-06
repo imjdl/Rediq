@@ -116,7 +116,8 @@ impl TaskBuilder {
         self
     }
 
-    /// Set priority (0-100, higher value means higher priority)
+    /// Set priority (0-100, lower value means higher priority)
+    /// Priority 0 is highest, 100 is lowest. Default is 50.
     #[must_use]
     pub fn priority(mut self, priority: i32) -> Self {
         self.options.priority = priority.clamp(0, 100);

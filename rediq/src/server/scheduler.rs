@@ -8,7 +8,7 @@
 //! are satisfied.
 
 use crate::{
-    storage::{Keys, RedisClient},
+    storage::{Keys, RedisClient, dependencies},
     Error, Result, Task,
 };
 use chrono::Utc;
@@ -243,21 +243,7 @@ impl Scheduler {
             _ => return Ok(()),
         };
 
-        let task_id = &task.id;
-
-        // Store pending dependencies for this task
-        let pending_deps_key: RedisKey = Keys::pending_deps(task_id).into();
-        let dep_values: Vec<RedisValue> = deps.iter().map(|id| id.as_str().into()).collect();
-        self.redis.sadd(pending_deps_key, dep_values[0].clone()).await?;
-
-        // Register this task as dependent on each dependency
-        for dep_id in &deps {
-            let task_deps_key: RedisKey = Keys::task_deps(dep_id).into();
-            self.redis.sadd(task_deps_key, task_id.as_str().into()).await?;
-        }
-
-        tracing::debug!("Task {} registered with {} dependencies", task_id, deps.len());
-        Ok(())
+        dependencies::register(&self.redis, &task.id, &deps).await
     }
 
     /// Check and enqueue dependent tasks
@@ -268,52 +254,7 @@ impl Scheduler {
     /// # Arguments
     /// * `completed_task_id` - The ID of the completed task
     pub async fn check_dependent_tasks(&self, completed_task_id: &str) -> Result<()> {
-        // Get tasks that depend on the completed task
-        let task_deps_key: RedisKey = Keys::task_deps(completed_task_id).into();
-        let dependents = self.redis.smembers(task_deps_key.clone()).await?;
-
-        if dependents.is_empty() {
-            return Ok(());
-        }
-
-        tracing::debug!("Task {} has {} dependent tasks", completed_task_id, dependents.len());
-
-        for dependent_id in dependents {
-            let dependent_id_str = dependent_id.as_str().to_string();
-
-            // Remove the completed task from the pending dependencies
-            let pending_deps_key: RedisKey = Keys::pending_deps(&dependent_id_str).into();
-            self.redis.srem(pending_deps_key.clone(), completed_task_id.into()).await?;
-
-            // Check if all dependencies are satisfied
-            let remaining_deps: u64 = self.redis.scard(pending_deps_key.clone()).await?;
-
-            if remaining_deps == 0 {
-                // All dependencies satisfied, load and enqueue the task
-                if let Some(task_data) = self.redis.get(Keys::task(&dependent_id_str).into()).await? {
-                    let bytes = task_data.as_bytes()
-                        .ok_or_else(|| Error::Serialization("Task data is not bytes".into()))?;
-
-                    let task: Task = rmp_serde::from_slice(bytes)
-                        .map_err(|e| Error::Serialization(e.to_string()))?;
-
-                    // Enqueue the task to its queue
-                    let queue_key: RedisKey = Keys::queue(&task.queue).into();
-                    self.redis.rpush(queue_key, dependent_id.as_str().into()).await?;
-
-                    tracing::info!("Task {} enqueued after all dependencies satisfied", dependent_id);
-
-                    // Clean up pending deps key
-                    self.redis.del(vec![pending_deps_key]).await?;
-                }
-            } else {
-                tracing::debug!("Task {} still has {} pending dependencies", dependent_id, remaining_deps);
-            }
-        }
-
-        // Clean up the task deps key for the completed task
-        self.redis.del(vec![task_deps_key]).await?;
-
+        dependencies::check_dependents(&self.redis, completed_task_id).await?;
         Ok(())
     }
 }

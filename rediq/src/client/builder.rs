@@ -39,8 +39,6 @@ impl Default for ClientConfig {
 #[derive(Clone)]
 pub struct Client {
     redis: RedisClient,
-    #[allow(dead_code)]
-    config: ClientConfig,
 }
 
 impl Client {
@@ -391,7 +389,6 @@ impl ClientBuilder {
         };
         Ok(Client {
             redis,
-            config: self.config,
         })
     }
 }

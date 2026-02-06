@@ -6,11 +6,6 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[allow(unused_imports)]
-use chrono::Utc;
-#[allow(unused_imports)]
-use uuid::Uuid;
-
 pub mod builder;
 
 pub use builder::TaskBuilder;
@@ -65,7 +60,8 @@ pub struct TaskOptions {
     pub cron: Option<String>,
     /// Unique key (for deduplication)
     pub unique_key: Option<String>,
-    /// Priority (0-100, higher value means higher priority)
+    /// Priority (0-100, lower value means higher priority)
+    /// 0 is highest priority, 100 is lowest priority, default is 50
     pub priority: i32,
     /// Task dependencies - list of task IDs that must complete before this task runs
     pub depends_on: Option<Vec<String>>,
@@ -197,6 +193,8 @@ impl Task {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
 
     #[test]
     fn test_task_validation() {

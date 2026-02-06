@@ -2,7 +2,7 @@
 //!
 //! Provides type-safe Redis operation interfaces.
 
-use crate::Result;
+use crate::{Error, Result};
 use fred::{
     interfaces::*,
     prelude::*,
@@ -446,9 +446,7 @@ impl RedisPipeline {
 
     /// Execute all commands
     pub async fn execute(self) -> Result<Vec<RedisValue>> {
-        // TODO: Implement real pipeline execution
-        // For now, return empty result
-        Ok(Vec::new())
+        Err(Error::Validation("Pipeline not yet implemented".into()))
     }
 }
 

@@ -77,9 +77,6 @@ pub mod processor;
 // Middleware
 pub mod middleware;
 
-// Scheduler
-pub mod scheduler;
-
 // Storage layer
 pub mod storage;
 
