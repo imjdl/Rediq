@@ -143,6 +143,23 @@ impl ServerBuilder {
         self
     }
 
+    /// Set Redis connection mode to Sentinel
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rediq::server::ServerBuilder;
+    /// let builder = ServerBuilder::new()
+    ///     .redis_url("redis://sentinel-1:26379")
+    ///     .sentinel_mode()
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn sentinel_mode(mut self) -> Self {
+        self.config.redis_mode = RedisMode::Sentinel;
+        self
+    }
+
     /// Set the queues to consume from
     ///
     /// # Arguments
@@ -249,6 +266,7 @@ impl ServerBuilder {
         let redis = match self.config.redis_mode {
             RedisMode::Standalone => RedisClient::from_url(&self.config.redis_url).await?,
             RedisMode::Cluster => RedisClient::from_cluster_url(&self.config.redis_url).await?,
+            RedisMode::Sentinel => RedisClient::from_sentinel_url(&self.config.redis_url).await?,
         };
 
         // Ping to verify connection
@@ -257,6 +275,7 @@ impl ServerBuilder {
         let mode_str = match self.config.redis_mode {
             RedisMode::Standalone => "Standalone",
             RedisMode::Cluster => "Cluster",
+            RedisMode::Sentinel => "Sentinel",
         };
         tracing::info!("Connected to Redis ({}) at {}", mode_str, self.config.redis_url);
 

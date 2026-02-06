@@ -81,3 +81,7 @@ path = "../examples/cron_example.rs"
 [[example]]
 name = "cluster_example"
 path = "../examples/cluster_example.rs"
+
+[[example]]
+name = "sentinel_example"
+path = "../examples/sentinel_example.rs"

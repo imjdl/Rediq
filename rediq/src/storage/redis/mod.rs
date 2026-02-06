@@ -17,6 +17,8 @@ pub enum RedisMode {
     Standalone,
     /// Redis Cluster mode
     Cluster,
+    /// Redis Sentinel mode for high availability
+    Sentinel,
 }
 
 impl Default for RedisMode {
@@ -72,6 +74,9 @@ impl RedisClient {
             }
             RedisMode::Cluster => {
                 tracing::info!("Connected to Redis Cluster at {}", config.url);
+            }
+            RedisMode::Sentinel => {
+                tracing::info!("Connected to Redis Sentinel at {}", config.url);
             }
         }
 
@@ -147,6 +152,69 @@ impl RedisClient {
         pool.init().await?;
 
         tracing::info!("Connected to Redis Cluster at {} (pool size: {})", url, pool_size);
+
+        Ok(Self {
+            pool: Arc::new(pool),
+        })
+    }
+
+    /// Create client from Redis Sentinel URL
+    ///
+    /// fred will automatically discover the master and handle failover.
+    /// Use any Sentinel node URL to connect.
+    ///
+    /// # Arguments
+    /// * `url` - Any sentinel node URL (e.g., "redis://sentinel-1:26379")
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use rediq::storage::RedisClient;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = RedisClient::from_sentinel_url("redis://sentinel-1:26379").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn from_sentinel_url(url: impl Into<String>) -> Result<Self> {
+        let url = url.into();
+        let redis_config = FredRedisConfig::from_url(&url)?;
+        let pool = RedisPool::new(
+            redis_config,
+            None,
+            None,
+            Some(ReconnectPolicy::default()),
+            10,
+        )?;
+
+        pool.init().await?;
+
+        tracing::info!("Connected to Redis Sentinel at {}", url);
+
+        Ok(Self {
+            pool: Arc::new(pool),
+        })
+    }
+
+    /// Create client from Redis Sentinel URL with custom pool size
+    ///
+    /// # Arguments
+    /// * `url` - Any sentinel node URL
+    /// * `pool_size` - Connection pool size
+    pub async fn from_sentinel_url_with_pool(url: impl Into<String>, pool_size: usize) -> Result<Self> {
+        let url = url.into();
+        let redis_config = FredRedisConfig::from_url(&url)?;
+        let pool = RedisPool::new(
+            redis_config,
+            None,
+            None,
+            Some(ReconnectPolicy::default()),
+            pool_size,
+        )?;
+
+        pool.init().await?;
+
+        tracing::info!("Connected to Redis Sentinel at {} (pool size: {})", url, pool_size);
 
         Ok(Self {
             pool: Arc::new(pool),

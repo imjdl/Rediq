@@ -320,6 +320,28 @@ impl ClientBuilder {
         self
     }
 
+    /// Set Redis connection mode to Sentinel
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::client::Client;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::builder()
+    ///     .redis_url("redis://sentinel-1:26379")
+    ///     .sentinel_mode()
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn sentinel_mode(mut self) -> Self {
+        self.config.redis_mode = RedisMode::Sentinel;
+        self
+    }
+
     /// Set connection pool size
     #[must_use]
     pub fn pool_size(mut self, size: usize) -> Self {
@@ -339,6 +361,7 @@ impl ClientBuilder {
         let redis = match self.config.redis_mode {
             RedisMode::Standalone => RedisClient::from_url(&self.config.redis_url).await?,
             RedisMode::Cluster => RedisClient::from_cluster_url(&self.config.redis_url).await?,
+            RedisMode::Sentinel => RedisClient::from_sentinel_url(&self.config.redis_url).await?,
         };
         Ok(Client {
             redis,
