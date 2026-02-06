@@ -214,6 +214,12 @@ impl RedisClient {
             commands: Vec::new(),
         }
     }
+
+    /// List operation: remove element
+    pub async fn lrem(&self, key: RedisKey, value: RedisValue, count: i64) -> Result<u64> {
+        let result: u64 = self.pool.lrem(key, count, value).await?;
+        Ok(result)
+    }
 }
 
 /// Redis Pipeline
@@ -250,7 +256,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires Redis server"]
     async fn test_redis_ping() {
-        let client = RedisClient::from_url("redis://localhost:6379")
+        let redis_url = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        let client = RedisClient::from_url(&redis_url)
             .await
             .unwrap();
         let result = client.ping().await.unwrap();

@@ -2,7 +2,7 @@
 //!
 //! Demonstrates how to use Rediq to create and process tasks
 
-use rediq::{client::Client, Task};
+use rediq::{client::Client, processor::{Handler, Mux}, server::ServerBuilder, Task};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -14,18 +14,61 @@ struct EmailPayload {
     body: String,
 }
 
+/// Email handler
+struct EmailHandler;
+
+#[async_trait::async_trait]
+impl Handler for EmailHandler {
+    async fn handle(&self, task: &rediq::Task) -> rediq::Result<()> {
+        // Deserialize payload
+        let payload: EmailPayload = rmp_serde::from_slice(&task.payload)
+            .map_err(|e| rediq::Error::Serialization(e.to_string()))?;
+
+        println!("Processing email task: {}", task.task_type);
+        println!("  To: {}", payload.to);
+        println!("  Subject: {}", payload.subject);
+        println!("  Body: {}", payload.body);
+
+        // Simulate email sending
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        Ok(())
+    }
+}
+
+/// Batch handler
+struct BatchHandler;
+
+#[async_trait::async_trait]
+impl Handler for BatchHandler {
+    async fn handle(&self, task: &rediq::Task) -> rediq::Result<()> {
+        println!("Processing batch task: {}", task.id);
+
+        // Simulate batch processing
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    // Create client
+    println!("Rediq Quickstart Example\n");
+
+    // Get Redis URL from environment or use default
+    let redis_url = std::env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
+    // ===== PART 1: Client - Enqueue tasks =====
+    println!("=== PART 1: Client - Creating tasks ===\n");
+
     let client = Client::builder()
-        .redis_url("redis://localhost:6379")
+        .redis_url(&redis_url)
         .build()
         .await?;
-
-    println!("Rediq Quickstart Example\n");
 
     // 1. Create simple task
     println!("1. Creating simple email task...");
@@ -100,48 +143,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let batch_stats = inspector.queue_stats("batch").await?;
     println!("   batch queue: pending={}, active={}\n", batch_stats.pending, batch_stats.active);
 
-    println!("Example completed!");
+    println!("=== PART 1 Complete: Tasks enqueued ===\n");
 
-    Ok(())
-}
+    // ===== PART 2: Server - Process tasks =====
+    println!("=== PART 2: Server - Starting to process tasks ===");
+    println!("Press Ctrl+C to stop the server\n");
 
-/// Server example code (not run in main)
-///
-/// To run this example, you need:
-/// 1. Ensure Redis is running
-/// 2. Implement complete Server/Worker functionality
-#[allow(dead_code)]
-async fn server_example() -> Result<(), Box<dyn std::error::Error>> {
-    use rediq::processor::{Handler, Mux};
-
-    // Custom handler
-    struct EmailHandler;
-
-    #[async_trait::async_trait]
-    impl Handler for EmailHandler {
-        async fn handle(&self, task: &rediq::Task) -> rediq::Result<()> {
-            println!("Processing email task: {}", task.task_type);
-            // Implement email sending logic here
-            Ok(())
-        }
-    }
-
-    // // Create server
-    // let mut server = Server::builder()
-    //     .redis_url("redis://localhost:6379")
-    //     .queues(&["default", "batch"])
-    //     .concurrency(10)
-    //     .build()
-    //     .await?;
-
-    // Register handler
+    // Register handlers
     let mut mux = Mux::new();
     mux.handle("email:send", EmailHandler);
     mux.handle("email:welcome", EmailHandler);
     mux.handle("notification:push", EmailHandler);
+    mux.handle("batch:process", BatchHandler);
 
-    // Run server
-    // server.run(mux).await?;
+    // Create and run server
+    let state = ServerBuilder::new()
+        .redis_url(&redis_url)
+        .queues(&["default", "batch"])
+        .concurrency(3)
+        .heartbeat_interval(5)
+        .build()
+        .await?;
+
+    let server = rediq::server::Server::from(state);
+    server.run(mux).await?;
+
+    println!("Server stopped gracefully");
 
     Ok(())
 }

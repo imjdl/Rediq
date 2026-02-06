@@ -43,3 +43,7 @@ tokio-test = { workspace = true }
 [[example]]
 name = "quickstart"
 path = "../examples/quickstart.rs"
+
+[[example]]
+name = "auto_test"
+path = "../examples/auto_test.rs"
