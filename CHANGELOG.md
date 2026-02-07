@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-02-07
+
+### Added
+- **Task execution progress tracking**: Report real-time progress (0-100%) during task execution
+  - `TaskProgressExt` trait for accessing progress reporter in handlers
+  - `ProgressContext` for reporting progress with optional messages
+  - `Inspector::get_task_progress()` for querying task progress
+  - Progress bar display in CLI Dashboard
+  - Throttled updates (500ms default) to avoid excessive Redis writes
+  - Independent Redis Hash storage (`rediq:progress:{task_id}`)
+  - Auto-cleanup with TTL (1 hour default)
+- Example: `progress_example.rs` demonstrating video processing with progress updates
+
+### Changed
+- Updated documentation (README, API reference, CLI docs) with progress tracking feature
+
+[0.1.1]: https://github.com/imjdl/rediq/releases/tag/v0.1.1
+
 ## [0.1.0] - 2025-02-07
 
 ### Added
