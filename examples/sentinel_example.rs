@@ -9,8 +9,8 @@
 //! Note: This requires a Redis Sentinel setup running.
 
 use rediq::client::Client;
-use rediq::processor::{Handler, Mux};
-use rediq::server::{Server, ServerBuilder};
+use rediq::processor::Handler;
+use rediq::server::ServerBuilder;
 use rediq::Task;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ struct TaskData {
     message: String,
 }
 
+#[allow(dead_code)]
 struct ExampleHandler;
 
 #[async_trait]
@@ -53,11 +54,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Starting Redis Sentinel Example");
 
     // Example Sentinel configuration
+    // Can be overridden via REDIS_SENTINEL_URL environment variable
+    let default_sentinel_url = "redis://127.0.0.1:26379";
+    let sentinel_url = std::env::var("REDIS_SENTINEL_URL")
+        .unwrap_or_else(|_| default_sentinel_url.to_string());
+
+    // Example Sentinel configuration
     // Replace with your actual Sentinel addresses
     let sentinel_addrs = vec![
-        "redis://192.168.1.128:26379",
-        "redis://192.168.1.128:26380",
-        "redis://192.168.1.128:26381",
+        &sentinel_url,
+        // Additional sentinel addresses can be added here
+        // "redis://192.168.1.128:26380",
+        // "redis://192.168.1.128:26381",
     ];
 
     // Use the first Sentinel address (fred will auto-discover the master)
@@ -103,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 2: Create Server in Sentinel mode
     tracing::info!("");
     tracing::info!("Example 2: Creating Server in Sentinel mode...");
-    let server_state = match ServerBuilder::new()
+    let _server_state = match ServerBuilder::new()
         .redis_url(sentinel_url)
         .sentinel_mode()
         .queues(&["tasks", "default"])

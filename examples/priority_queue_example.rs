@@ -54,9 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Starting Priority Queue Example");
 
+    let redis_url = std::env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
     // Build server state
     let state = ServerBuilder::new()
-        .redis_url("redis://192.168.1.128:6379")
+        .redis_url(&redis_url)
         .queues(&["jobs"])
         .concurrency(2)
         .build()
@@ -74,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sleep(Duration::from_secs(2)).await;
 
         let client = Client::builder()
-            .redis_url("redis://192.168.1.128:6379")
+            .redis_url(&redis_url)
             .build()
             .await
             .unwrap();

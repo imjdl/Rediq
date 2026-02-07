@@ -9,8 +9,8 @@
 //! Note: This requires a Redis Cluster running on the specified nodes.
 
 use rediq::client::Client;
-use rediq::processor::{Handler, Mux};
-use rediq::server::{Server, ServerBuilder};
+use rediq::processor::Handler;
+use rediq::server::ServerBuilder;
 use rediq::Task;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ struct JobData {
     message: String,
 }
 
+#[allow(dead_code)]
 struct JobHandler;
 
 #[async_trait]
@@ -53,11 +54,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Starting Redis Cluster Example");
 
     // Example cluster node URLs
+    // Can be overridden via REDIS_CLUSTER_URL environment variable
+    let default_cluster_url = "redis://127.0.0.1:7000";
+    let cluster_url = std::env::var("REDIS_CLUSTER_URL")
+        .unwrap_or_else(|_| default_cluster_url.to_string());
+
+    // Example cluster node URLs
     // Replace with your actual cluster node addresses
     let cluster_nodes = vec![
-        "redis://192.168.1.128:7000",
-        "redis://192.168.1.128:7001",
-        "redis://192.168.1.128:7002",
+        &cluster_url,
+        // Additional cluster nodes can be added here
+        // "redis://192.168.1.128:7001",
+        // "redis://192.168.1.128:7002",
     ];
 
     // Use the first node for connection (fred will auto-discover other nodes)
@@ -93,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 2: Create Server in Cluster mode
     tracing::info!("");
     tracing::info!("Example 2: Creating Server in Cluster mode...");
-    let server_state = match ServerBuilder::new()
+    let _server_state = match ServerBuilder::new()
         .redis_url(cluster_url)
         .cluster_mode()
         .queues(&["jobs", "default"])
