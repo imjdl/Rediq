@@ -10,6 +10,7 @@
 -- ARGV[2]: unique_key (optional)
 -- ARGV[3]: final status (processed/dead)
 -- ARGV[4]: error_message (optional)
+-- ARGV[5]: task_ttl (optional, TTL in seconds for task details, default 86400)
 
 local active_key = KEYS[1]
 local task_key = KEYS[2]
@@ -19,6 +20,7 @@ local task_id = ARGV[1]
 local unique_key = ARGV[2]
 local status = ARGV[3]
 local error_msg = ARGV[4]
+local task_ttl = tonumber(ARGV[5]) or 86400
 
 -- Remove from active queue
 redis.call('LREM', active_key, 1, task_id)
@@ -28,7 +30,7 @@ redis.call('HSET', task_key, 'status', status)
 if error_msg and error_msg ~= '' then
     redis.call('HSET', task_key, 'last_error', error_msg)
 end
-redis.call('EXPIRE', task_key, 86400)
+redis.call('EXPIRE', task_key, task_ttl)
 
 -- If successful, remove deduplication record
 if status == 'processed' and unique_key and unique_key ~= '' then

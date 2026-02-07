@@ -2,7 +2,7 @@
 
 use crate::{
     storage::{Keys, RedisClient, RedisMode},
-    Error, Result,
+    config, Error, Result,
 };
 use crate::task::Task;
 use chrono::Utc;
@@ -94,7 +94,8 @@ impl Client {
         }
 
         // Register queue
-        // TODO: Use SADD to add to meta:queues
+        let queues_key: RedisKey = Keys::meta_queues().into();
+        self.redis.sadd(queues_key, queue.as_str().into()).await?;
 
         tracing::debug!("Task enqueued: {}", task_id);
         Ok(task_id)
@@ -120,6 +121,10 @@ impl Client {
         let delayed_key: RedisKey = Keys::delayed(&queue).into();
         self.redis.zadd(delayed_key, task_id.as_str().into(), execute_at).await?;
 
+        // Register queue
+        let queues_key: RedisKey = Keys::meta_queues().into();
+        self.redis.sadd(queues_key, queue.as_str().into()).await?;
+
         tracing::debug!("Delayed task enqueued: {}", task_id);
         Ok(task_id)
     }
@@ -134,11 +139,12 @@ impl Client {
         let priority = task.options.priority;
         let unique_key = task.options.unique_key.clone();
 
-        // Validate priority
-        if priority < 0 || priority > 100 {
+        // Validate priority (use global config)
+        let priority_range = config::get_priority_range();
+        if priority < priority_range.0 || priority > priority_range.1 {
             return Err(Error::Validation(format!(
-                "Priority must be between 0 and 100, got {}",
-                priority
+                "Priority must be between {} and {}, got {}",
+                priority_range.0, priority_range.1, priority
             )));
         }
 
@@ -159,6 +165,10 @@ impl Client {
             let dedup_key: RedisKey = Keys::dedup(&queue).into();
             self.redis.sadd(dedup_key, key.into()).await?;
         }
+
+        // Register queue
+        let queues_key: RedisKey = Keys::meta_queues().into();
+        self.redis.sadd(queues_key, queue.as_str().into()).await?;
 
         tracing::debug!("Priority task enqueued: {} (priority: {})", task_id, priority);
         Ok(task_id)
@@ -198,14 +208,30 @@ impl Client {
         let cron_key: RedisKey = Keys::cron_queue(&queue).into();
         self.redis.zadd(cron_key, task_id.as_str().into(), next_time).await?;
 
+        // Register queue
+        let queues_key: RedisKey = Keys::meta_queues().into();
+        self.redis.sadd(queues_key, queue.as_str().into()).await?;
+
         tracing::debug!("Cron task enqueued: {} (cron: {}, next: {})", task_id, cron_expr, next_time);
         Ok(task_id)
     }
 
     /// Batch enqueue
+    ///
+    /// This optimized version uses Redis pipelining to reduce network round trips.
+    /// All tasks are serialized and queued in a single batch operation.
     pub async fn enqueue_batch(&self, tasks: Vec<Task>) -> Result<Vec<String>> {
-        let mut task_ids = Vec::with_capacity(tasks.len());
+        if tasks.is_empty() {
+            return Ok(Vec::new());
+        }
 
+        let mut task_ids = Vec::with_capacity(tasks.len());
+        let mut registered_queues = std::collections::HashSet::new();
+
+        // Create pipeline for batch operations
+        let mut pipeline = self.redis.pipeline();
+
+        // Process tasks and collect Redis operations
         for task in tasks {
             let task_id = task.id.clone();
             task_ids.push(task_id.clone());
@@ -214,19 +240,35 @@ impl Client {
             let task_data = rmp_serde::to_vec(&task)
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
-            // Store task details
+            // Add SET command to pipeline (store task details)
             let task_key: RedisKey = Keys::task(&task_id).into();
-            self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+            pipeline = pipeline.set(task_key, RedisValue::Bytes(task_data.into()));
 
-            // Add task_id to queue
+            // Add RPUSH command to pipeline (add task_id to queue)
             let queue_key: RedisKey = Keys::queue(&task.queue).into();
-            self.redis.rpush(queue_key, task_id.as_str().into()).await?;
+            pipeline = pipeline.rpush(queue_key, task_id.as_str().into());
 
-            // Handle deduplication
+            // Add SADD command to pipeline if unique_key exists
             if let Some(key) = &task.options.unique_key {
                 let dedup_key: RedisKey = Keys::dedup(&task.queue).into();
-                self.redis.sadd(dedup_key, key.as_str().into()).await?;
+                pipeline = pipeline.sadd(dedup_key, key.as_str().into());
             }
+
+            // Track queues for registration
+            registered_queues.insert(task.queue.clone());
+        }
+
+        // Execute all Redis commands in a single round trip
+        pipeline.execute().await?;
+
+        // Register all queues (also use pipeline for efficiency)
+        if !registered_queues.is_empty() {
+            let mut queues_pipeline = self.redis.pipeline();
+            let queues_key: RedisKey = Keys::meta_queues().into();
+            for queue in registered_queues {
+                queues_pipeline = queues_pipeline.sadd(queues_key.clone(), queue.as_str().into());
+            }
+            queues_pipeline.execute().await?;
         }
 
         tracing::debug!("Batch enqueued {} tasks", task_ids.len());
@@ -298,10 +340,12 @@ impl Client {
     pub async fn cancel_task_with_unique(&self, task_id: &str, queue_name: &str, unique_key: Option<&str>) -> Result<bool> {
         let cancelled = self.cancel_task(task_id, queue_name).await?;
 
-        if cancelled && unique_key.is_some() {
-            // Remove from deduplication set
-            let dedup_key: RedisKey = Keys::dedup(queue_name).into();
-            self.redis.srem(dedup_key, unique_key.unwrap().into()).await?;
+        if cancelled {
+            if let Some(key) = unique_key {
+                // Remove from deduplication set
+                let dedup_key: RedisKey = Keys::dedup(queue_name).into();
+                self.redis.srem(dedup_key, key.into()).await?;
+            }
         }
 
         Ok(cancelled)

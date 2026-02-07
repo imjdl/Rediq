@@ -226,11 +226,77 @@ impl RediqMetrics {
         let metric_families = self.registry.gather();
         encoder.encode_to_string(&metric_families).unwrap_or_default()
     }
-}
 
-impl Default for RediqMetrics {
-    fn default() -> Self {
-        Self::new().expect("failed to create metrics")
+    /// Create a new metrics collector with fallback to empty metrics
+    ///
+    /// This method attempts to create a new metrics collector. If creation fails,
+    /// it returns a collector that will not record any metrics but will not panic.
+    /// This is useful for situations where metrics are optional but you want to
+    /// avoid runtime failures.
+    pub fn new_or_default() -> Self {
+        Self::new().unwrap_or_else(|_| {
+            tracing::warn!("Failed to create Prometheus metrics, using no-op metrics collector");
+            // Create a minimal no-op metrics collector
+            let registry = Registry::new();
+            Self {
+                registry: Arc::new(registry),
+                tasks_enqueued_total: IntCounterVec::new(
+                    Opts::new("rediq_tasks_enqueued_total", "Total number of tasks enqueued"),
+                    &["queue", "task_type"]
+                ).unwrap_or_else(|_| {
+                    // This should not fail with empty labels, but handle it gracefully
+                    IntCounterVec::new(
+                        Opts::new("noop", "noop"),
+                        &[]
+                    ).unwrap()
+                }),
+                tasks_processed_total: IntCounterVec::new(
+                    Opts::new("rediq_tasks_processed_total", "Total number of tasks processed successfully"),
+                    &["queue", "task_type"]
+                ).unwrap_or_else(|_| IntCounterVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                tasks_failed_total: IntCounterVec::new(
+                    Opts::new("rediq_tasks_failed_total", "Total number of tasks that failed"),
+                    &["queue", "task_type", "error_type"]
+                ).unwrap_or_else(|_| IntCounterVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                tasks_retried_total: IntCounterVec::new(
+                    Opts::new("rediq_tasks_retried_total", "Total number of task retries"),
+                    &["queue", "task_type"]
+                ).unwrap_or_else(|_| IntCounterVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                task_duration_seconds: HistogramVec::new(
+                    HistogramOpts::new("rediq_task_duration_seconds", "Task processing duration in seconds"),
+                    &["queue", "task_type"]
+                ).unwrap_or_else(|_| HistogramVec::new(HistogramOpts::new("noop", "noop"), &[]).unwrap()),
+                queue_pending_tasks: IntGaugeVec::new(
+                    Opts::new("rediq_queue_pending_tasks", "Number of pending tasks in queue"),
+                    &["queue"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                queue_active_tasks: IntGaugeVec::new(
+                    Opts::new("rediq_queue_active_tasks", "Number of active tasks in queue"),
+                    &["queue"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                queue_delayed_tasks: IntGaugeVec::new(
+                    Opts::new("rediq_queue_delayed_tasks", "Number of delayed tasks in queue"),
+                    &["queue"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                queue_retry_tasks: IntGaugeVec::new(
+                    Opts::new("rediq_queue_retry_tasks", "Number of retry tasks in queue"),
+                    &["queue"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                queue_dead_tasks: IntGaugeVec::new(
+                    Opts::new("rediq_queue_dead_tasks", "Number of dead tasks in queue"),
+                    &["queue"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                worker_active_tasks: IntGaugeVec::new(
+                    Opts::new("rediq_worker_active_tasks", "Number of active tasks for worker"),
+                    &["worker_id"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                worker_heartbeat: IntGaugeVec::new(
+                    Opts::new("rediq_worker_heartbeat", "Worker heartbeat timestamp"),
+                    &["worker_id"]
+                ).unwrap_or_else(|_| IntGaugeVec::new(Opts::new("noop", "noop"), &[]).unwrap()),
+                processing_duration_seconds: Histogram::with_opts(HistogramOpts::new("noop", "noop")).unwrap(),
+            }
+        })
     }
 }
 

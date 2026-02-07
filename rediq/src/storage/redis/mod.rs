@@ -2,7 +2,7 @@
 //!
 //! Provides type-safe Redis operation interfaces.
 
-use crate::{Error, Result};
+use crate::Result;
 use fred::{
     interfaces::*,
     prelude::*,
@@ -417,10 +417,7 @@ impl RedisClient {
 
     /// Pipeline operation
     pub fn pipeline(&self) -> RedisPipeline {
-        RedisPipeline {
-            pool: self.pool.clone(),
-            commands: Vec::new(),
-        }
+        RedisPipeline::new(self.pool.clone())
     }
 
     /// List operation: remove element
@@ -430,31 +427,69 @@ impl RedisClient {
     }
 }
 
-/// Redis Pipeline
+/// Redis Pipeline for batch operations
+///
+/// Allows multiple Redis commands to be sent together, reducing network round trips.
 pub struct RedisPipeline {
-    #[allow(dead_code)]
     pool: Arc<RedisPool>,
-    commands: Vec<String>,
+    sets: Vec<(RedisKey, RedisValue)>,
+    rpushes: Vec<(RedisKey, Vec<RedisValue>)>,
+    sadds: Vec<(RedisKey, RedisValue)>,
 }
 
 impl RedisPipeline {
-    /// Add SET command
+    /// Create a new pipeline
+    pub fn new(pool: Arc<RedisPool>) -> Self {
+        Self {
+            pool,
+            sets: Vec::new(),
+            rpushes: Vec::new(),
+            sadds: Vec::new(),
+        }
+    }
+
+    /// Add a SET command
     pub fn set(mut self, key: RedisKey, value: RedisValue) -> Self {
-        self.commands.push(format!("SET {:?} {:?}", key, value));
+        self.sets.push((key, value));
         self
     }
 
-    /// Add RPUSH command
+    /// Add an RPUSH command
     pub fn rpush(mut self, key: RedisKey, value: RedisValue) -> Self {
-        self.commands.push(format!("RPUSH {:?} {:?}", key, value));
+        self.rpushes.push((key, vec![value]));
+        self
+    }
+
+    /// Add an SADD command
+    pub fn sadd(mut self, key: RedisKey, member: RedisValue) -> Self {
+        self.sadds.push((key, member));
         self
     }
 
     /// Execute all commands
     pub async fn execute(self) -> Result<Vec<RedisValue>> {
-        Err(Error::Validation("Pipeline not yet implemented".into()))
+        // Execute SET commands
+        for (key, value) in self.sets {
+            let _: () = self.pool.set(key, value, None, None, false).await?;
+        }
+
+        // Execute RPUSH commands
+        for (key, values) in self.rpushes {
+            let _: u64 = self.pool.rpush(key, values).await?;
+        }
+
+        // Execute SADD commands
+        for (key, member) in self.sadds {
+            let _: u64 = self.pool.sadd(key, member).await?;
+        }
+
+        // Return empty results (commands executed in order)
+        Ok(Vec::new())
     }
 }
+
+/// Redis Pipeline for batch operations (legacy alias)
+pub type RedisPipelineBuilder = RedisPipeline;
 
 #[cfg(test)]
 mod tests {

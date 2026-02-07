@@ -3,6 +3,7 @@
 //! Provides Task struct and TaskBuilder for building and serializing tasks.
 
 use crate::{Error, Result};
+use crate::config;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -129,21 +130,22 @@ impl Task {
             return Err(Error::Validation("payload cannot be empty".into()));
         }
 
-        // Payload size limit (512KB)
-        const MAX_PAYLOAD_SIZE: usize = 512 * 1024;
-        if self.payload.len() > MAX_PAYLOAD_SIZE {
+        // Payload size limit (use global config)
+        let max_payload_size = config::get_max_payload_size();
+        if self.payload.len() > max_payload_size {
             return Err(Error::Validation(format!(
                 "payload exceeds {}KB limit (got {}B)",
-                MAX_PAYLOAD_SIZE / 1024,
+                max_payload_size / 1024,
                 self.payload.len()
             )));
         }
 
-        // Validate priority range
-        if self.options.priority < 0 || self.options.priority > 100 {
+        // Validate priority range (use global config)
+        let priority_range = config::get_priority_range();
+        if self.options.priority < priority_range.0 || self.options.priority > priority_range.1 {
             return Err(Error::Validation(format!(
-                "priority must be between 0 and 100, got {}",
-                self.options.priority
+                "priority must be between {} and {}, got {}",
+                priority_range.0, priority_range.1, self.options.priority
             )));
         }
 

@@ -107,7 +107,7 @@ mod tests {
         use super::super::RediqMetrics;
         use std::sync::Arc;
 
-        let metrics = Arc::new(RediqMetrics::new().unwrap());
+        let metrics = Arc::new(RediqMetrics::new_or_default());
         let server = MetricsServer::new_default(metrics);
         assert_eq!(server.bind_address.port(), 9090);
     }

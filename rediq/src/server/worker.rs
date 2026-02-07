@@ -38,6 +38,9 @@ pub struct Worker {
 
     /// Current queue index for round-robin polling
     queue_index: Arc<AtomicUsize>,
+
+    /// Cached queue references for cheap access (avoids cloning String)
+    queues: Vec<Arc<String>>,
 }
 
 impl Worker {
@@ -48,12 +51,19 @@ impl Worker {
         shutdown: Arc<AtomicBool>,
         mux: Arc<Mutex<Mux>>,
     ) -> Self {
+        // Cache queue references to avoid cloning in hot path
+        let queues: Vec<Arc<String>> = state.config.queues
+            .iter()
+            .map(|s| Arc::new(s.clone()))
+            .collect();
+
         Self {
             id,
             state,
             shutdown,
             mux,
             queue_index: Arc::new(AtomicUsize::new(0)),
+            queues,
         }
     }
 
@@ -230,9 +240,12 @@ impl Worker {
     }
 
     /// Get next queue using round-robin
-    fn next_queue(&self) -> String {
-        let index = self.queue_index.fetch_add(1, Ordering::Relaxed) % self.state.config.queues.len();
-        self.state.config.queues[index].clone()
+    ///
+    /// This method uses Arc<String> to avoid expensive String clones.
+    /// Cloning an Arc is much cheaper than cloning a String.
+    fn next_queue(&self) -> Arc<String> {
+        let index = self.queue_index.fetch_add(1, Ordering::Relaxed) % self.queues.len();
+        Arc::clone(&self.queues[index])
     }
 
     /// Dequeue a task from the specified queue
