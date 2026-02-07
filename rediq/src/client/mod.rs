@@ -250,6 +250,7 @@ mod tests {
             delayed: 5,
             retried: 1,
             dead: 0,
+            completed: 100,
         };
 
         assert_eq!(stats.name, "default");
