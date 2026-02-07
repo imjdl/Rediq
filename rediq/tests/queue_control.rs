@@ -95,7 +95,7 @@ async fn test_paused_queue_no_processing() {
     let handler_for_server = (*handler).clone();
     let count_ref = handler.count.clone();
 
-    // Start server
+    // Start server (scheduler is enabled by default)
     let state = ServerBuilder::new()
         .redis_url(&redis_url)
         .queues(&[&queue_name])

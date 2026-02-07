@@ -69,7 +69,7 @@ async fn test_middleware_chain() {
 
     let handler = TestHandler;
 
-    // Start server (middleware integration depends on Server implementation)
+    // Start server (middleware integration depends on Server implementation, scheduler enabled by default)
     let state = ServerBuilder::new()
         .redis_url(&redis_url)
         .queues(&[&queue_name])

@@ -366,6 +366,8 @@ impl Worker {
             }
         };
 
+        drop(mux); // Release lock after handler completes
+
         // Execute middleware after hooks
         if !self.state.middleware.is_empty() {
             let _ = self.state.middleware.after(&task, &process_result).await;

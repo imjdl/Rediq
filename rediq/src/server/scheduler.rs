@@ -53,36 +53,39 @@ impl Scheduler {
     pub async fn run(self) -> Result<()> {
         tracing::info!("Scheduler started for queues: {:?}", self.queues);
 
-        let mut retry_interval = tokio::time::interval(Duration::from_secs(1));
-        let mut delayed_interval = tokio::time::interval(Duration::from_secs(5));
-        let mut cron_interval = tokio::time::interval(Duration::from_secs(60));
+        let mut tick_count = 0u64;
 
         loop {
-            tokio::select! {
-                _ = retry_interval.tick() => {
-                    if let Err(e) = self.check_retry_tasks().await {
-                        tracing::error!("Retry check error: {}", e);
-                    }
-                }
-                _ = delayed_interval.tick() => {
-                    if let Err(e) = self.check_delayed_tasks().await {
-                        tracing::error!("Delayed check error: {}", e);
-                    }
-                }
-                _ = cron_interval.tick() => {
-                    if let Err(e) = self.check_cron_tasks().await {
-                        tracing::error!("Cron check error: {}", e);
-                    }
-                }
-            }
-
+            // Check for shutdown BEFORE doing any work
             if self.shutdown.load(Ordering::Relaxed) {
-                break;
+                tracing::info!("Scheduler stopped after {} ticks", tick_count);
+                return Ok(());
             }
-        }
 
-        tracing::info!("Scheduler stopped");
-        Ok(())
+            tick_count += 1;
+
+            // Check retry tasks (every 1 second)
+            if let Err(e) = self.check_retry_tasks().await {
+                tracing::error!("Retry check error: {}", e);
+            }
+
+            // Check delayed tasks (every 5 seconds)
+            if tick_count % 5 == 0 {
+                if let Err(e) = self.check_delayed_tasks().await {
+                    tracing::error!("Delayed check error: {}", e);
+                }
+            }
+
+            // Check cron tasks (every 60 seconds)
+            if tick_count % 60 == 0 {
+                if let Err(e) = self.check_cron_tasks().await {
+                    tracing::error!("Cron check error: {}", e);
+                }
+            }
+
+            // Sleep for 1 second
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 
     /// Request graceful shutdown

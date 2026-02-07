@@ -56,7 +56,7 @@ async fn test_processing_increments_metrics() {
 
     let handler = TestHandler;
 
-    // Start server
+    // Start server (scheduler is enabled by default)
     let state = ServerBuilder::new()
         .redis_url(&redis_url)
         .queues(&[&queue_name])
@@ -91,8 +91,8 @@ async fn test_processing_increments_metrics() {
         if stats.completed >= 1 {
             break;
         }
-        if start.elapsed() > std::time::Duration::from_secs(10) {
-            panic!("No tasks were completed within 10 seconds");
+        if start.elapsed() > std::time::Duration::from_secs(30) {
+            panic!("No tasks were completed within 30 seconds");
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }

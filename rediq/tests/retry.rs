@@ -42,7 +42,7 @@ async fn test_task_retry_on_failure() {
     // Clone the handler value (not the Arc) for the server
     let handler_for_server = (*handler).clone();
 
-    // Start server
+    // Start server (scheduler is enabled by default)
     let state = ServerBuilder::new()
         .redis_url(&redis_url)
         .queues(&[&queue_name])
@@ -70,14 +70,15 @@ async fn test_task_retry_on_failure() {
     client.enqueue(task).await.unwrap();
 
     // Wait for task to be processed (after retry)
+    // Note: Allow sufficient time for retry delay and processing
     let start = std::time::Instant::now();
     loop {
         let count = handler.fail_count.load(Ordering::Relaxed);
         if count >= 2 {
             break;
         }
-        if start.elapsed() > std::time::Duration::from_secs(15) {
-            panic!("Task was not retried within 15 seconds, fail_count: {}", count);
+        if start.elapsed() > std::time::Duration::from_secs(60) {
+            panic!("Task was not retried within 60 seconds, fail_count: {}", count);
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }

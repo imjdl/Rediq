@@ -71,7 +71,7 @@ async fn test_task_processing() {
     // Clone the handler value (not the Arc) for the server
     let handler_for_server = (*handler).clone();
 
-    // Start server
+    // Start server (scheduler is enabled by default)
     let state = ServerBuilder::new()
         .redis_url(&redis_url)
         .queues(&[&queue_name])

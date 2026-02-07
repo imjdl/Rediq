@@ -53,6 +53,7 @@ impl Client {
         let queue = task.queue.clone();
         let unique_key = task.options.unique_key.clone();
         let deps = task.options.depends_on.clone();
+        let priority = task.options.priority;
 
         // Serialize task
         let task_data = rmp_serde::to_vec(&task)
@@ -83,9 +84,9 @@ impl Client {
             }
         }
 
-        // Add task_id to queue
-        let queue_key: RedisKey = Keys::queue(&queue).into();
-        self.redis.rpush(queue_key, task_id.as_str().into()).await?;
+        // Register queue
+        let queues_key: RedisKey = Keys::meta_queues().into();
+        self.redis.sadd(queues_key, queue.as_str().into()).await?;
 
         // Handle deduplication
         if let Some(key) = unique_key {
@@ -93,11 +94,20 @@ impl Client {
             self.redis.sadd(dedup_key, key.into()).await?;
         }
 
-        // Register queue
-        let queues_key: RedisKey = Keys::meta_queues().into();
-        self.redis.sadd(queues_key, queue.as_str().into()).await?;
+        // Check if task has non-default priority (default is 50)
+        const DEFAULT_PRIORITY: i32 = 50;
+        if priority != DEFAULT_PRIORITY {
+            // Enqueue to priority queue (ZSet with priority as score)
+            let pqueue_key: RedisKey = Keys::priority_queue(&queue).into();
+            self.redis.zadd(pqueue_key, task_id.as_str().into(), priority as i64).await?;
+            tracing::debug!("Priority task enqueued: {} (priority: {})", task_id, priority);
+        } else {
+            // Enqueue to regular queue (List)
+            let queue_key: RedisKey = Keys::queue(&queue).into();
+            self.redis.rpush(queue_key, task_id.as_str().into()).await?;
+            tracing::debug!("Task enqueued: {}", task_id);
+        }
 
-        tracing::debug!("Task enqueued: {}", task_id);
         Ok(task_id)
     }
 
