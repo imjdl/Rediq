@@ -238,8 +238,15 @@ let client = Client::builder()
 Rediq includes a CLI tool for queue management:
 
 ```bash
-# Real-time dashboard
+# Real-time dashboard with history trends
 rediq dash
+
+# Dashboard features:
+# - Live queue statistics (Pending, Active, Completed, Dead, Retry)
+# - Real-time sparkline charts showing historical trends
+# - Error rate tracking and visualization
+# - Worker status and health monitoring
+# - Auto-scaling charts with time range indicators
 
 # Queue operations
 rediq queue list
