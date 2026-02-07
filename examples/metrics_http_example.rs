@@ -33,10 +33,8 @@ struct EmailHandler;
 #[async_trait]
 impl Handler for EmailHandler {
     async fn handle(&self, task: &rediq::Task) -> rediq::Result<()> {
-        // Convert payload bytes to string, then parse JSON
-        let payload_str = std::str::from_utf8(&task.payload)
-            .map_err(|e| rediq::Error::Serialization(e.to_string()))?;
-        let data: EmailData = serde_json::from_str(payload_str)
+        // Payload is MessagePack serialized, use rmp_serde to deserialize
+        let data: EmailData = rmp_serde::from_slice(&task.payload)
             .map_err(|e| rediq::Error::Serialization(e.to_string()))?;
 
         tracing::info!("Sending email to {}: {}", data.to, data.subject);
