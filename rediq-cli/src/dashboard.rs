@@ -11,10 +11,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Sparkline, Table, Wrap},
     Frame, Terminal,
 };
 use rediq::client::{Client, TaskInfo};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use chrono::{Local, TimeZone};
 
@@ -29,6 +30,8 @@ enum ViewMode {
     Main,
     /// Task list for selected queue
     TaskList,
+    /// History trend view
+    History,
     /// Help overlay
     Help,
 }
@@ -97,6 +100,105 @@ struct OperationStatus {
     timestamp: Instant,
 }
 
+// ============================================================================
+// History Trend Data Structures
+// ============================================================================
+
+/// A single data point in history
+#[derive(Clone, Copy, Debug)]
+struct HistoryPoint {
+    /// Value at this point
+    value: u64,
+    /// Timestamp when this point was recorded
+    timestamp: Instant,
+}
+
+/// History data for trend visualization
+#[derive(Default)]
+struct HistoryData {
+    /// Pending task count history
+    pending: VecDeque<HistoryPoint>,
+    /// Active task count history
+    active: VecDeque<HistoryPoint>,
+    /// Completed task count history
+    completed: VecDeque<HistoryPoint>,
+    /// Dead letter queue history
+    dead: VecDeque<HistoryPoint>,
+    /// Error rate history (stored as integer: percentage * 10)
+    error_rate: VecDeque<HistoryPoint>,
+    /// Maximum history points to keep
+    max_points: usize,
+}
+
+impl HistoryData {
+    /// Create new history data with specified max points
+    fn new(max_points: usize) -> Self {
+        Self {
+            max_points,
+            ..Default::default()
+        }
+    }
+
+    /// Add a new data point, trimming if necessary
+    fn add_point(&mut self, metric: &str, value: u64) {
+        let point = HistoryPoint {
+            value,
+            timestamp: Instant::now(),
+        };
+
+        let queue = match metric {
+            "pending" => &mut self.pending,
+            "active" => &mut self.active,
+            "completed" => &mut self.completed,
+            "dead" => &mut self.dead,
+            "error_rate" => &mut self.error_rate,
+            _ => return,
+        };
+
+        queue.push_back(point);
+        if queue.len() > self.max_points {
+            queue.pop_front();
+        }
+    }
+
+    /// Get values as a vector for sparkline
+    fn get_values(&self, metric: &str) -> Vec<u64> {
+        match metric {
+            "pending" => self.pending.iter().map(|p| p.value).collect(),
+            "active" => self.active.iter().map(|p| p.value).collect(),
+            "completed" => self.completed.iter().map(|p| p.value).collect(),
+            "dead" => self.dead.iter().map(|p| p.value).collect(),
+            "error_rate" => self.error_rate.iter().map(|p| p.value).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Get the age of the oldest point in seconds
+    fn oldest_age_secs(&self, metric: &str) -> u64 {
+        let queue = match metric {
+            "pending" => &self.pending,
+            "active" => &self.active,
+            "completed" => &self.completed,
+            "dead" => &self.dead,
+            "error_rate" => &self.error_rate,
+            _ => return 0,
+        };
+
+        queue.front()
+            .map(|p| p.timestamp.elapsed().as_secs())
+            .unwrap_or(0)
+    }
+
+    /// Check if history has any data
+    #[allow(dead_code)]
+    fn has_data(&self) -> bool {
+        !self.pending.is_empty()
+            || !self.active.is_empty()
+            || !self.completed.is_empty()
+            || !self.dead.is_empty()
+    }
+}
+
 pub struct DashboardState {
     /// Current view mode
     view_mode: ViewMode,
@@ -126,6 +228,9 @@ pub struct DashboardState {
     total_processed: u64,
     /// Operations per second
     ops_per_sec: f64,
+
+    /// Historical trend data
+    history: HistoryData,
 
     /// Client for queue operations (stored as reference to avoid lifetime issues)
     _client: PhantomData<Client>,
@@ -183,6 +288,7 @@ pub async fn run(_redis_url: &str, refresh_interval_ms: u64, client: &Client) ->
         last_update: Instant::now(),
         total_processed: 0,
         ops_per_sec: 0.0,
+        history: HistoryData::new(60), // Keep 60 data points (5 min at 500ms refresh)
         _client: PhantomData,
     };
 
@@ -249,6 +355,9 @@ async fn run_dashboard(
                     }
                     ViewMode::TaskList => {
                         handle_task_list_input(state, key.code, inspector).await?;
+                    }
+                    ViewMode::History => {
+                        handle_history_input(state);
                     }
                     ViewMode::Help => {
                         handle_help_input(state);
@@ -317,6 +426,11 @@ async fn handle_main_input(
             state.view_mode = ViewMode::Help;
         }
 
+        // History view
+        KeyCode::Char('h') => {
+            state.view_mode = ViewMode::History;
+        }
+
         // Clear status with Esc
         KeyCode::Esc => {
             state.operation_status = None;
@@ -375,6 +489,16 @@ fn handle_help_input(state: &mut DashboardState) {
         ViewMode::Help => {
             // Close help on Esc, q, or ?
             state.show_help = false;
+            state.view_mode = ViewMode::Main;
+        }
+        _ => {}
+    }
+}
+
+fn handle_history_input(state: &mut DashboardState) {
+    match state.view_mode {
+        ViewMode::History => {
+            // Close history on Esc, h, or q
             state.view_mode = ViewMode::Main;
         }
         _ => {}
@@ -640,6 +764,31 @@ async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut Dashboar
     }
 
     state.last_update = now;
+
+    // Record history data points
+    if !state.queues.is_empty() {
+        // Aggregate data across all queues for trends
+        let total_pending: u64 = state.queues.iter().map(|q| q.pending).sum();
+        let total_active: u64 = state.queues.iter().map(|q| q.active).sum();
+        let total_completed: u64 = state.queues.iter().map(|q| q.completed).sum();
+        let total_dead: u64 = state.queues.iter().map(|q| q.dead).sum();
+
+        state.history.add_point("pending", total_pending);
+        state.history.add_point("active", total_active);
+        state.history.add_point("completed", total_completed);
+        state.history.add_point("dead", total_dead);
+
+        // Calculate and record error rate (as integer: percentage * 10)
+        let total_retry: u64 = state.queues.iter().map(|q| q.retry).sum();
+        let total_failures = total_dead + total_retry;
+        let total_outcomes = total_completed + total_failures;
+        let error_rate = if total_outcomes > 0 {
+            ((total_failures as f64 / total_outcomes as f64) * 1000.0) as u64
+        } else {
+            0
+        };
+        state.history.add_point("error_rate", error_rate);
+    }
 }
 
 async fn refresh_task_list(state: &mut DashboardState, inspector: &rediq::client::Inspector) {
@@ -757,6 +906,9 @@ fn ui(f: &mut Frame, state: &DashboardState) {
         ViewMode::TaskList => {
             draw_main_view(f, state, area);
             draw_task_list_overlay(f, state, area);
+        }
+        ViewMode::History => {
+            draw_history_view(f, state, area);
         }
         ViewMode::Help => {
             draw_main_view(f, state, area);
@@ -1154,6 +1306,7 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ]),
         Line::from("  ↑↓/←→    Navigate queue list"),
         Line::from("  Enter    View tasks in selected queue"),
+        Line::from("  h        View history trends"),
         Line::from("  Esc      Return to main view / Clear status"),
         Line::from(""),
         Line::from(vec![
@@ -1186,6 +1339,151 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         .alignment(Alignment::Left);
 
     f.render_widget(paragraph, popup_area);
+}
+
+// ============================================================================
+// History View Rendering
+// ============================================================================
+
+/// Draw a title bar with the given text
+fn draw_title_bar(f: &mut Frame, area: Rect, text: &str) {
+    let time_str = Local::now().format("%H:%M:%S").to_string();
+    let title = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::styled(time_str, Style::default().fg(Color::DarkGray)),
+        ]),
+    ])
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, area);
+}
+
+fn draw_history_view(f: &mut Frame, state: &DashboardState, area: Rect) {
+    // Split into header, content, and footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    // Header
+    draw_title_bar(f, chunks[0], "History Trends");
+
+    // Content - split into multiple sparkline charts
+    let content_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ])
+        .split(chunks[1]);
+
+    // Get the maximum value for each metric to scale the sparklines
+    let pending_max = state.history.get_values("pending").iter().copied().max().unwrap_or(1);
+    let active_max = state.history.get_values("active").iter().copied().max().unwrap_or(1);
+    let completed_max = state.history.get_values("completed").iter().copied().max().unwrap_or(1);
+    let dead_max = state.history.get_values("dead").iter().copied().max().unwrap_or(1);
+    let error_rate_max = state.history.get_values("error_rate").iter().copied().max().unwrap_or(1);
+
+    // Pending tasks sparkline
+    draw_sparkline_chart(
+        f,
+        content_chunks[0],
+        "Pending Tasks",
+        &state.history.get_values("pending"),
+        pending_max,
+        Color::Cyan,
+        state.history.oldest_age_secs("pending"),
+    );
+
+    // Active tasks sparkline
+    draw_sparkline_chart(
+        f,
+        content_chunks[1],
+        "Active Tasks",
+        &state.history.get_values("active"),
+        active_max,
+        Color::Green,
+        state.history.oldest_age_secs("active"),
+    );
+
+    // Completed tasks sparkline
+    draw_sparkline_chart(
+        f,
+        content_chunks[2],
+        "Completed Tasks",
+        &state.history.get_values("completed"),
+        completed_max,
+        Color::Blue,
+        state.history.oldest_age_secs("completed"),
+    );
+
+    // Dead letter queue sparkline
+    draw_sparkline_chart(
+        f,
+        content_chunks[3],
+        "Dead Letter Queue",
+        &state.history.get_values("dead"),
+        dead_max,
+        Color::Red,
+        state.history.oldest_age_secs("dead"),
+    );
+
+    // Error rate sparkline (values are percentage * 10, so divide by 10 for display)
+    let error_rate_values: Vec<u64> = state.history.get_values("error_rate");
+    let error_rate_display: Vec<u64> = error_rate_values.iter().map(|v| v / 10).collect();
+    let error_rate_max_display = (error_rate_max / 10).max(1);
+    draw_sparkline_chart(
+        f,
+        content_chunks[4],
+        "Error Rate (%)",
+        &error_rate_display,
+        error_rate_max_display,
+        Color::Yellow,
+        state.history.oldest_age_secs("error_rate"),
+    );
+
+    // Footer
+    let footer = Paragraph::new("Press Esc/h/q to return | ?: Help")
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    f.render_widget(footer, chunks[2]);
+}
+
+fn draw_sparkline_chart(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    data: &[u64],
+    max_value: u64,
+    color: Color,
+    age_secs: u64,
+) {
+    let title_suffix = if age_secs > 0 {
+        format!(" ({}s ago)", age_secs)
+    } else {
+        " (Collecting...)".to_string()
+    };
+
+    let sparkline = Sparkline::default()
+        .block(
+            Block::default()
+                .title(format!("{}{}", title, title_suffix))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(color))
+        )
+        .data(data)
+        .style(Style::default().fg(color))
+        .max(max_value.max(1));
+
+    f.render_widget(sparkline, area);
 }
 
 fn draw_status_message(f: &mut Frame, status: &OperationStatus, area: Rect) {
