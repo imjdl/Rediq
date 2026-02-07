@@ -32,6 +32,7 @@ Rediq simplifies background job processing in Rust applications. Whether you nee
 | **Automatic Retry** | Configurable retry mechanism with exponential backoff (2s, 4s, 8s...) |
 | **Dead Letter Queue** | Failed tasks are automatically moved to a dead letter queue |
 | **Task Dependencies** | Define task execution dependencies (B waits for A to complete) |
+| **Progress Tracking** | Report task execution progress (0-100%) with custom messages |
 | **Middleware System** | Built-in middleware for logging, metrics, and custom hooks |
 | **Prometheus Metrics** | Built-in observability with optional HTTP endpoint (`/metrics`) |
 | **Redis HA** | Support for Redis Cluster and Sentinel for high availability |
@@ -201,6 +202,38 @@ let state = ServerBuilder::new()
     .await?;
 ```
 
+### Task Progress Tracking
+
+Report task execution progress (useful for long-running tasks):
+
+```rust
+use rediq::task::TaskProgressExt;
+use async_trait::async_trait;
+
+struct VideoProcessingHandler;
+
+#[async_trait]
+impl Handler for VideoProcessingHandler {
+    async fn handle(&self, task: &Task) -> rediq::Result<()> {
+        // Get progress reporter
+        if let Some(progress) = task.progress() {
+            progress.report_with_message(0, Some("Starting...")).await?;
+
+            // Process and report progress
+            for i in 0..=10 {
+                // ... do work ...
+                progress.report(i * 10).await?;
+            }
+
+            progress.report_with_message(100, Some("Done!")).await?;
+        }
+        Ok(())
+    }
+}
+```
+
+Query progress with `inspector.get_task_progress(task_id)` or view in CLI dashboard.
+
 ### HTTP Metrics Endpoint
 
 Enable Prometheus metrics:
@@ -246,6 +279,7 @@ rediq dash
 # - Real-time sparkline charts showing historical trends
 # - Error rate tracking and visualization
 # - Worker status and health monitoring
+# - Task progress bars for active tasks
 # - Auto-scaling charts with time range indicators
 
 # Queue operations
@@ -300,6 +334,9 @@ cargo run --example dependency_example
 # Middleware
 cargo run --example middleware_test
 
+# Progress tracking
+cargo run --example progress_example
+
 # HTTP metrics endpoint
 cargo run --example metrics_http_example
 
@@ -325,6 +362,7 @@ Rediq is actively developed and production-ready. Current status:
 - ✅ Priority queues
 - ✅ Delayed and periodic tasks
 - ✅ Task dependencies
+- ✅ Task progress tracking
 - ✅ Middleware system
 - ✅ Prometheus metrics
 - ✅ Redis Cluster/Sentinel support

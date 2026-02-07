@@ -95,3 +95,7 @@ path = "../examples/dependency_example.rs"
 [[example]]
 name = "benchmark"
 path = "../examples/benchmark.rs"
+
+[[example]]
+name = "progress_example"
+path = "../examples/progress_example.rs"

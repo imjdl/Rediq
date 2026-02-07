@@ -6,9 +6,11 @@ use crate::{
     storage::{Keys, RedisClient, dependencies},
     Error, Result, Task,
     task::TaskStatus,
+    progress::{ProgressContext, ProgressConfig},
 };
 use crate::processor::Mux;
 use crate::server::config::ServerState;
+use crate::task::progress_ext::set_progress_context;
 use chrono::Utc;
 use fred::prelude::{RedisKey, RedisValue};
 use rmp_serde;
@@ -339,6 +341,20 @@ impl Worker {
     async fn process_task(&self, mut task: Task) -> Result<()> {
         tracing::debug!("Processing task: {}", task.description());
 
+        // Setup progress context before execution
+        let progress_config = ProgressConfig::default();
+        let progress_ctx = ProgressContext::new(
+            task.id.clone(),
+            self.state.redis.clone(),
+            progress_config,
+        );
+
+        // Set progress context for this task
+        set_progress_context(Some(progress_ctx.clone()));
+
+        // Initialize progress to 0
+        let _ = progress_ctx.report(0).await;
+
         // Execute middleware before hooks
         if !self.state.middleware.is_empty() {
             self.state.middleware.before(&task).await?;
@@ -366,9 +382,14 @@ impl Worker {
             let _ = self.state.middleware.after(&task, &process_result).await;
         }
 
+        // Clear progress context
+        set_progress_context(None);
+
         // Update task status based on result
         match &process_result {
             Ok(_) => {
+                // Set final progress to 100% on success
+                let _ = progress_ctx.report(100).await;
                 self.ack_task(&task, TaskStatus::Processed, None).await?;
             }
             Err(e) => {

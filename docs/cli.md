@@ -297,6 +297,25 @@ rediq dash -i 1000
 - Total processed tasks
 - Operations per second
 - Worker health indicator
+- **Task progress bars for active tasks**
+- Historical trend charts (sparklines)
+- Error rate visualization
+
+**Task List with Progress:**
+
+When viewing tasks in the dashboard, active tasks show their progress:
+
+```
+Tasks in queue: default
+┌──────────────┬─────────────┬──────────┬──────────┬────────┐
+│ ID           │ Type        │ Status   │ Progress │ Retry  │
+├──────────────┼─────────────┼──────────┼──────────┼────────┤
+│ abc123...    │ video:proc  │ Active   │ [████▒]  │ 0      │
+│ def456...    │ email:send  │ Pending  │ N/A      │ 0      │
+└──────────────┴─────────────┴──────────┴──────────┴────────┘
+```
+
+Press `Enter` on a task to view detailed progress information.
 
 **Keyboard Controls:**
 - `q` or `Esc` - Quit

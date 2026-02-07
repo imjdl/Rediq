@@ -113,6 +113,13 @@ impl Keys {
     pub fn task_deps(task_id: &str) -> String {
         format!("{}:task_deps:{}", PREFIX, task_id)
     }
+
+    /// Task progress Key (Hash)
+    /// Stores task execution progress (current, message, updated_at)
+    /// Example: rediq:progress:a1b2c3d4-...
+    pub fn progress(task_id: &str) -> String {
+        format!("{}:progress:{}", PREFIX, task_id)
+    }
 }
 
 #[cfg(test)]
@@ -138,5 +145,6 @@ mod tests {
         assert_eq!(Keys::stats("default"), "rediq:stats:default");
         assert_eq!(Keys::pending_deps("task-123"), "rediq:pending_deps:task-123");
         assert_eq!(Keys::task_deps("task-456"), "rediq:task_deps:task-456");
+        assert_eq!(Keys::progress("abc123"), "rediq:progress:abc123");
     }
 }
