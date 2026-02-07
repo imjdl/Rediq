@@ -95,6 +95,7 @@ Queue Details: emails
   Delayed: 0
   Retry: 1
   Dead: 0
+  Completed: 1523
 ```
 
 #### Pause queue
@@ -269,6 +270,7 @@ Statistics
   Delayed: 0
   Retry: 1
   Dead: 0
+  Completed: 1523
 ```
 
 ---
@@ -309,10 +311,10 @@ rediq dash -i 1000
 ┌─────────────────────────────────────────────────────────────┐
 │ Queues (3)  │ Workers (5)  │                              │
 ├──────────────┼──────────────┤                              │
-│ Queue    Pen Act Del Ret Dead │ Worker  Server  Status  Proc  │
-│ default  42   3   0   1   0  │ w-0     svr1    idle     1523  │
-│ emails   10   1   0   0   0  │ w-1     svr1    idle      890  │
-│ reports  5    0   0   0   0  │ ...                              │
+│ Queue    Pen Act Del Ret Dead Comp │ Worker  Server  Status  Proc  │
+│ default  42   3   0   1   0  1523  │ w-0     svr1    idle     1523  │
+│ emails   10   1   0   0   0   890  │ w-1     svr1    idle      890  │
+│ reports  5    0   0   0   0   234  │ ...                              │
 └──────────────┴──────────────┴──────────────────────────────┘
 
 ┌───────────────────────┬─────────────────────────┐
@@ -322,7 +324,8 @@ rediq dash -i 1000
 │ ├ Active:        4   │                          │
 │ ├ Delayed:       0   │                          │
 │ ├ Retry:         1   │                          │
-│ └ Dead:          0   │                          │
+│ ├ Dead:          0   │                          │
+│ └ Completed:  2647   │                          │
 │                        │ ┌─────────────────────┐ │
 │                        │ │ Worker Health        │ │
 │                        │ │ ████████████░░ 80% │ │
