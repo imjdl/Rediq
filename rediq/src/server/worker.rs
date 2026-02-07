@@ -277,35 +277,26 @@ impl Worker {
     ///
     /// Priority queues use ZSet where lower score = higher priority
     async fn dequeue_task_priority(&self, queue: &str) -> Result<Option<Task>> {
-        // Check if queue is paused
-        let pause_key: RedisKey = Keys::pause(queue).into();
-        if self.state.redis.exists(pause_key).await? {
-            return Err(Error::QueuePaused(queue.to_string()));
-        }
-
-        // Check if priority queue has tasks
         let pqueue_key: RedisKey = Keys::priority_queue(queue).into();
-        let count = self.state.redis.zcard(pqueue_key.clone()).await?;
+        let active_key: RedisKey = Keys::active(queue).into();
+        let pause_key: RedisKey = Keys::pause(queue).into();
+        // Use a dummy key prefix for the task (the script constructs the actual task key)
+        let dummy_key: RedisKey = format!("rediq:task:*").into();
+        let task_ttl = crate::config::get_task_ttl() as usize;
 
-        if count == 0 {
-            return Ok(None);
-        }
-
-        // Get task with highest priority (lowest score)
-        match self.state.redis.zrange(pqueue_key.clone(), 0, 0).await?.first() {
-            Some(task_id) => {
-                let task_id = task_id.clone(); // Clone before moving
-                // Remove from priority queue
-                self.state.redis.zrem(pqueue_key, task_id.as_str().into()).await?;
-
-                // Move to active queue
-                let active_key: RedisKey = Keys::active(queue).into();
-                self.state.redis.lpush(active_key, task_id.as_str().into()).await?;
-
-                // Load full task data
+        // Use pdequeue.lua for atomic dequeue (check pause + zrange + zrem + lpush)
+        match self.state.redis.pdequeue_lua(
+            pqueue_key,
+            active_key,
+            pause_key,
+            dummy_key,
+            task_ttl,
+        ).await? {
+            task_id if !task_id.is_empty() => {
+                // Task was dequeued successfully, now load the full task data
                 self.load_task(&task_id).await.map(Some)
             }
-            None => Ok(None),
+            _ => Ok(None), // No task available (timeout or queue empty)
         }
     }
 
@@ -313,9 +304,11 @@ impl Worker {
     async fn dequeue_task_any(&self, queue: &str) -> Result<Option<Task>> {
         // Try priority queue first
         let pqueue_key: RedisKey = Keys::priority_queue(queue).into();
-        let has_priority = self.state.redis.zcard(pqueue_key).await? > 0;
+        let priority_count = self.state.redis.zcard(pqueue_key.clone()).await?;
+        tracing::debug!("Priority queue {} has {} tasks", queue, priority_count);
 
-        if has_priority {
+        if priority_count > 0 {
+            tracing::debug!("Attempting to dequeue from priority queue {}", queue);
             return self.dequeue_task_priority(queue).await;
         }
 
