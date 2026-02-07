@@ -11,21 +11,127 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table, Wrap},
     Frame, Terminal,
 };
-use rediq::client::Client;
+use rediq::client::{Client, TaskInfo};
 use std::time::{Duration, Instant};
-use chrono::Local;
+use chrono::{Local, TimeZone};
+
+// ============================================================================
+// Data Structures
+// ============================================================================
+
+/// Dashboard view modes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    /// Main dashboard view
+    Main,
+    /// Task list for selected queue
+    TaskList,
+    /// Help overlay
+    Help,
+}
+
+/// Task list panel state
+struct TaskListState {
+    /// Current task list
+    tasks: Vec<TaskInfo>,
+    /// Current page (0-indexed)
+    page: usize,
+    /// Tasks per page
+    page_size: usize,
+    /// Selected task index
+    selected_task: usize,
+    /// Queue name for current task list
+    queue_name: String,
+    /// Total available tasks
+    total_available: usize,
+}
+
+/// Alert severity
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AlertSeverity {
+    Warning,
+    Critical,
+}
+
+/// Individual alert
+struct Alert {
+    /// Alert message
+    #[allow(dead_code)]
+    message: String,
+    /// Alert severity
+    severity: AlertSeverity,
+    /// Whether alert is active
+    active: bool,
+}
+
+/// Alert thresholds and state
+struct AlertState {
+    /// Dead letter queue threshold
+    dead_threshold: u64,
+    /// Error rate threshold (percentage)
+    error_rate_threshold: f64,
+    /// Current alerts
+    alerts: Vec<Alert>,
+}
+
+/// Status type for operation messages
+#[derive(Debug, Clone)]
+enum StatusType {
+    Success,
+    Error,
+    #[allow(dead_code)]
+    Info,
+    Warning,
+}
+
+/// Queue operation status message
+struct OperationStatus {
+    /// Status message
+    message: String,
+    /// Status type
+    status_type: StatusType,
+    /// Timestamp when status was set
+    timestamp: Instant,
+}
 
 pub struct DashboardState {
+    /// Current view mode
+    view_mode: ViewMode,
+
+    /// Queue statistics
     queues: Vec<QueueStats>,
+    /// Worker information
     workers: Vec<WorkerInfo>,
+    /// Selected queue index
     selected_queue: usize,
+
+    /// Task list state (when in TaskList view)
+    task_list: Option<TaskListState>,
+
+    /// Alert state
+    alerts: AlertState,
+
+    /// Operation status message
+    operation_status: Option<OperationStatus>,
+
+    /// Help overlay visibility
+    show_help: bool,
+
+    /// Last data update timestamp
     last_update: Instant,
+    /// Total processed tasks
     total_processed: u64,
+    /// Operations per second
     ops_per_sec: f64,
+
+    /// Client for queue operations (stored as reference to avoid lifetime issues)
+    _client: PhantomData<Client>,
 }
+
+use std::marker::PhantomData;
 
 #[derive(Clone)]
 struct QueueStats {
@@ -47,7 +153,11 @@ struct WorkerInfo {
     processed: u64,
 }
 
-pub async fn run(redis_url: &str, refresh_interval_ms: u64) -> Result<()> {
+// ============================================================================
+// Public API
+// ============================================================================
+
+pub async fn run(_redis_url: &str, refresh_interval_ms: u64, client: &Client) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -55,16 +165,25 @@ pub async fn run(redis_url: &str, refresh_interval_ms: u64) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let client = Client::builder().redis_url(redis_url).build().await?;
     let inspector = client.inspector();
 
     let mut state = DashboardState {
+        view_mode: ViewMode::Main,
         queues: Vec::new(),
         workers: Vec::new(),
         selected_queue: 0,
+        task_list: None,
+        alerts: AlertState {
+            dead_threshold: 100,
+            error_rate_threshold: 20.0,
+            alerts: Vec::new(),
+        },
+        operation_status: None,
+        show_help: false,
         last_update: Instant::now(),
         total_processed: 0,
         ops_per_sec: 0.0,
+        _client: PhantomData,
     };
 
     // Initial data fetch
@@ -76,6 +195,7 @@ pub async fn run(redis_url: &str, refresh_interval_ms: u64) -> Result<()> {
     let result = run_dashboard(
         &mut terminal,
         &inspector,
+        client,
         &mut state,
         refresh_duration,
         &mut last_refresh,
@@ -94,9 +214,14 @@ pub async fn run(redis_url: &str, refresh_interval_ms: u64) -> Result<()> {
     result
 }
 
+// ============================================================================
+// Main Dashboard Loop
+// ============================================================================
+
 async fn run_dashboard(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     inspector: &rediq::client::Inspector,
+    client: &Client,
     state: &mut DashboardState,
     refresh_duration: Duration,
     last_refresh: &mut Instant,
@@ -112,24 +237,22 @@ async fn run_dashboard(
 
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        return Ok(());
+                // Handle global quit keys first
+                if key.code == KeyCode::Char('q') && state.view_mode == ViewMode::Main {
+                    return Ok(());
+                }
+
+                // Handle input based on current view mode
+                match state.view_mode {
+                    ViewMode::Main => {
+                        handle_main_input(state, key.code, client).await?;
                     }
-                    KeyCode::Up | KeyCode::Left => {
-                        if state.selected_queue > 0 {
-                            state.selected_queue -= 1;
-                        }
+                    ViewMode::TaskList => {
+                        handle_task_list_input(state, key.code, inspector).await?;
                     }
-                    KeyCode::Down | KeyCode::Right => {
-                        if !state.queues.is_empty() && state.selected_queue < state.queues.len() - 1 {
-                            state.selected_queue += 1;
-                        }
+                    ViewMode::Help => {
+                        handle_help_input(state);
                     }
-                    KeyCode::Enter => {
-                        // Could show detailed queue info
-                    }
-                    _ => {}
                 }
             }
         }
@@ -137,10 +260,310 @@ async fn run_dashboard(
         // Refresh data at interval
         if last_refresh.elapsed() >= refresh_duration {
             refresh_data(inspector, state).await;
+            check_and_update_alerts(state);
             *last_refresh = Instant::now();
+
+            // Clear expired operation status messages (after 3 seconds)
+            if let Some(ref status) = state.operation_status {
+                if status.timestamp.elapsed() > Duration::from_secs(3) {
+                    state.operation_status = None;
+                }
+            }
         }
     }
 }
+
+// ============================================================================
+// Input Handling
+// ============================================================================
+
+async fn handle_main_input(
+    state: &mut DashboardState,
+    key: KeyCode,
+    client: &Client,
+) -> Result<()> {
+    match key {
+        // Navigation
+        KeyCode::Up | KeyCode::Left => {
+            if state.selected_queue > 0 {
+                state.selected_queue -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Right => {
+            if !state.queues.is_empty() && state.selected_queue < state.queues.len() - 1 {
+                state.selected_queue += 1;
+            }
+        }
+
+        // Enter task list view
+        KeyCode::Enter => {
+            enter_task_list_view(state, client).await?;
+        }
+
+        // Queue operations
+        KeyCode::Char('p') => {
+            pause_selected_queue(state, client).await?;
+        }
+        KeyCode::Char('r') => {
+            resume_selected_queue(state, client).await?;
+        }
+        KeyCode::Char('f') => {
+            flush_selected_queue(state, client).await?;
+        }
+
+        // Help
+        KeyCode::Char('?') => {
+            state.show_help = true;
+            state.view_mode = ViewMode::Help;
+        }
+
+        // Clear status with Esc
+        KeyCode::Esc => {
+            state.operation_status = None;
+        }
+
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_task_list_input(
+    state: &mut DashboardState,
+    key: KeyCode,
+    inspector: &rediq::client::Inspector,
+) -> Result<()> {
+    if let Some(ref mut task_list) = state.task_list {
+        match key {
+            KeyCode::Esc => {
+                // Return to main view
+                state.view_mode = ViewMode::Main;
+                state.task_list = None;
+            }
+            KeyCode::Up => {
+                if task_list.selected_task > 0 {
+                    task_list.selected_task -= 1;
+                } else if task_list.page > 0 {
+                    // Go to previous page
+                    task_list.page -= 1;
+                    task_list.selected_task = task_list.page_size - 1;
+                    refresh_task_list(state, inspector).await;
+                }
+            }
+            KeyCode::Down => {
+                let max_idx = task_list.tasks.len().saturating_sub(1);
+                if task_list.selected_task < max_idx {
+                    task_list.selected_task += 1;
+                } else if (task_list.selected_task + 1) % task_list.page_size == 0 && task_list.selected_task + 1 < task_list.total_available {
+                    // Go to next page
+                    task_list.page += 1;
+                    task_list.selected_task = 0;
+                    refresh_task_list(state, inspector).await;
+                }
+            }
+            KeyCode::Char('r') => {
+                // Refresh task list
+                refresh_task_list(state, inspector).await;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_help_input(state: &mut DashboardState) {
+    match state.view_mode {
+        ViewMode::Help => {
+            // Close help on Esc, q, or ?
+            state.show_help = false;
+            state.view_mode = ViewMode::Main;
+        }
+        _ => {}
+    }
+}
+
+// ============================================================================
+// Queue Operations
+// ============================================================================
+
+async fn enter_task_list_view(state: &mut DashboardState, client: &Client) -> Result<()> {
+    if state.queues.is_empty() {
+        set_operation_status(
+            state,
+            "No queues available".to_string(),
+            StatusType::Warning,
+        );
+        return Ok(());
+    }
+
+    let queue_name = state.queues[state.selected_queue].name.clone();
+    let queue_name_for_clone = queue_name.clone();
+    let inspector = client.inspector();
+
+    // Get task count first
+    let total_available = match inspector.list_tasks(&queue_name, 1).await {
+        Ok(_) => {
+            // We'll get the actual count in refresh_task_list
+            100 // Default, will be updated
+        }
+        Err(_) => {
+            set_operation_status(
+                state,
+                format!("Failed to list tasks for queue '{}'", queue_name),
+                StatusType::Error,
+            );
+            return Ok(());
+        }
+    };
+
+    let page_size = 20;
+
+    let task_list = TaskListState {
+        tasks: Vec::new(),
+        page: 0,
+        page_size,
+        selected_task: 0,
+        queue_name: queue_name_for_clone,
+        total_available,
+    };
+
+    state.task_list = Some(task_list);
+    state.view_mode = ViewMode::TaskList;
+
+    // Fetch initial task list
+    if let Some(ref tl) = state.task_list {
+        let inspector = client.inspector();
+        match inspector.list_tasks(&tl.queue_name, tl.page_size).await {
+            Ok(tasks) => {
+                if let Some(ref mut task_list) = state.task_list {
+                    let len = tasks.len();
+                    task_list.total_available = len;
+                    task_list.tasks = tasks;
+                    // Update selected_task if needed
+                    if task_list.selected_task >= len && len > 0 {
+                        task_list.selected_task = len - 1;
+                    }
+                }
+            }
+            Err(_) => {
+                set_operation_status(
+                    state,
+                    format!("Failed to load tasks for queue '{}'", queue_name),
+                    StatusType::Error,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn pause_selected_queue(state: &mut DashboardState, client: &Client) -> Result<()> {
+    if state.queues.is_empty() {
+        set_operation_status(
+            state,
+            "No queues available".to_string(),
+            StatusType::Warning,
+        );
+        return Ok(());
+    }
+
+    let queue_name = &state.queues[state.selected_queue].name;
+
+    match client.pause_queue(queue_name).await {
+        Ok(_) => {
+            set_operation_status(
+                state,
+                format!("Queue '{}' paused", queue_name),
+                StatusType::Success,
+            );
+        }
+        Err(e) => {
+            set_operation_status(
+                state,
+                format!("Failed to pause queue: {}", e),
+                StatusType::Error,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn resume_selected_queue(state: &mut DashboardState, client: &Client) -> Result<()> {
+    if state.queues.is_empty() {
+        set_operation_status(
+            state,
+            "No queues available".to_string(),
+            StatusType::Warning,
+        );
+        return Ok(());
+    }
+
+    let queue_name = &state.queues[state.selected_queue].name;
+
+    match client.resume_queue(queue_name).await {
+        Ok(_) => {
+            set_operation_status(
+                state,
+                format!("Queue '{}' resumed", queue_name),
+                StatusType::Success,
+            );
+        }
+        Err(e) => {
+            set_operation_status(
+                state,
+                format!("Failed to resume queue: {}", e),
+                StatusType::Error,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn flush_selected_queue(state: &mut DashboardState, client: &Client) -> Result<()> {
+    if state.queues.is_empty() {
+        set_operation_status(
+            state,
+            "No queues available".to_string(),
+            StatusType::Warning,
+        );
+        return Ok(());
+    }
+
+    let queue_name = &state.queues[state.selected_queue].name.clone();
+
+    match client.flush_queue(queue_name).await {
+        Ok(count) => {
+            set_operation_status(
+                state,
+                format!("Queue '{}' flushed ({} tasks removed)", queue_name, count),
+                StatusType::Success,
+            );
+        }
+        Err(e) => {
+            set_operation_status(
+                state,
+                format!("Failed to flush queue: {}", e),
+                StatusType::Error,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn set_operation_status(state: &mut DashboardState, message: String, status_type: StatusType) {
+    state.operation_status = Some(OperationStatus {
+        message,
+        status_type,
+        timestamp: Instant::now(),
+    });
+}
+
+// ============================================================================
+// Data Refresh
+// ============================================================================
 
 async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut DashboardState) {
     let now = Instant::now();
@@ -184,6 +607,11 @@ async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut Dashboar
     // Update queues
     if let Some(new_queues) = queues_result {
         state.queues = new_queues;
+
+        // Validate selected_queue index
+        if !state.queues.is_empty() && state.selected_queue >= state.queues.len() {
+            state.selected_queue = state.queues.len() - 1;
+        }
     }
 
     // Update workers
@@ -214,9 +642,135 @@ async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut Dashboar
     state.last_update = now;
 }
 
+async fn refresh_task_list(state: &mut DashboardState, inspector: &rediq::client::Inspector) {
+    if let Some(ref mut task_list) = state.task_list {
+        match inspector.list_tasks(&task_list.queue_name, task_list.page_size).await {
+            Ok(tasks) => {
+                let len = tasks.len();
+                task_list.total_available = len;
+                task_list.tasks = tasks;
+                // Update selected_task if needed
+                if task_list.selected_task >= len && len > 0 {
+                    task_list.selected_task = len - 1;
+                }
+            }
+            Err(_) => {
+                // Keep existing tasks on error
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Alert System
+// ============================================================================
+
+fn check_and_update_alerts(state: &mut DashboardState) {
+    let mut alerts = Vec::new();
+
+    // Check dead letter queue threshold
+    let total_dead: u64 = state.queues.iter().map(|q| q.dead).sum();
+    if total_dead > state.alerts.dead_threshold {
+        alerts.push(Alert {
+            message: format!(
+                "Dead letter queue: {} tasks (threshold: {})",
+                total_dead, state.alerts.dead_threshold
+            ),
+            severity: AlertSeverity::Critical,
+            active: true,
+        });
+    }
+
+    // Check error rate threshold
+    let error_rate = calculate_error_rate(state);
+    if error_rate > state.alerts.error_rate_threshold {
+        alerts.push(Alert {
+            message: format!(
+                "Error rate: {:.1}% (threshold: {:.1}%)",
+                error_rate, state.alerts.error_rate_threshold
+            ),
+            severity: AlertSeverity::Warning,
+            active: true,
+        });
+    }
+
+    state.alerts.alerts = alerts;
+}
+
+fn calculate_error_rate(state: &DashboardState) -> f64 {
+    let total_dead: u64 = state.queues.iter().map(|q| q.dead).sum();
+    let total_retry: u64 = state.queues.iter().map(|q| q.retry).sum();
+    let total_completed: u64 = state.queues.iter().map(|q| q.completed).sum();
+
+    let total_failures = total_dead + total_retry;
+    let total_outcomes = total_completed + total_failures;
+
+    if total_outcomes == 0 {
+        0.0
+    } else {
+        (total_failures as f64 / total_outcomes as f64) * 100.0
+    }
+}
+
+fn error_rate_color(error_rate: f64) -> Color {
+    if error_rate < 5.0 {
+        Color::Green
+    } else if error_rate < 20.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    }
+}
+
+// ============================================================================
+// UI Rendering
+// ============================================================================
+
 fn ui(f: &mut Frame, state: &DashboardState) {
     let area = f.area();
 
+    // Draw alert borders if there are active alerts
+    for alert in &state.alerts.alerts {
+        if alert.active {
+            let border_style = match alert.severity {
+                AlertSeverity::Warning => Style::default().fg(Color::Yellow),
+                AlertSeverity::Critical => Style::default().fg(Color::Red),
+            };
+
+            // Flash effect - toggle visibility based on time
+            let should_show = (Local::now().timestamp_millis() / 500) % 2 == 0;
+
+            if should_show {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style);
+                f.render_widget(block, area);
+            }
+        }
+    }
+
+    // Draw based on view mode
+    match state.view_mode {
+        ViewMode::Main => {
+            draw_main_view(f, state, area);
+        }
+        ViewMode::TaskList => {
+            draw_main_view(f, state, area);
+            draw_task_list_overlay(f, state, area);
+        }
+        ViewMode::Help => {
+            draw_main_view(f, state, area);
+            draw_help_overlay(f, area);
+        }
+    }
+
+    // Draw operation status message if present
+    if let Some(ref status) = state.operation_status {
+        draw_status_message(f, status, area);
+    }
+}
+
+fn draw_main_view(f: &mut Frame, state: &DashboardState, area: Rect) {
     // Title bar with timestamp and total processed
     let time_str = Local::now().format("%H:%M:%S").to_string();
     let elapsed = state.last_update.elapsed().as_millis();
@@ -226,6 +780,7 @@ fn ui(f: &mut Frame, state: &DashboardState) {
         format!("{}s ago", elapsed / 1000)
     };
 
+    let help_hint = " ?:Help ";
     let title = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Rediq", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -235,7 +790,10 @@ fn ui(f: &mut Frame, state: &DashboardState) {
             Span::styled(format!("Total Processed: {}", state.total_processed), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
-            Span::styled("Press 'q' to quit | ↑↓ to select queue", Style::default().fg(Color::DarkGray)),
+            Span::styled("↑↓:Select Enter:Tasks p:Pause r:Resume f:Flush", Style::default().fg(Color::DarkGray)),
+            Span::raw(" "),
+            Span::styled(help_hint, Style::default().fg(Color::Cyan)),
+            Span::styled("q:Quit", Style::default().fg(Color::DarkGray)),
         ]),
     ])
     .block(Block::default().borders(Borders::ALL));
@@ -383,6 +941,7 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
         .split(area);
 
     // Left side - metrics
+    let error_rate = calculate_error_rate(state);
     let metrics = if !state.queues.is_empty() {
         let total_pending: u64 = state.queues.iter().map(|q| q.pending).sum();
         let total_active: u64 = state.queues.iter().map(|q| q.active).sum();
@@ -422,6 +981,14 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
                 Span::styled("└ Processed:   ", Style::default().fg(Color::White)),
                 Span::styled(state.total_processed.to_string(), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             ]),
+            Line::from(vec![]),  // Empty line for spacing
+            Line::from(vec![
+                Span::styled("Error Rate:    ", Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{:.1}%", error_rate),
+                    Style::default().fg(error_rate_color(error_rate)).add_modifier(Modifier::BOLD)
+                ),
+            ]),
         ]
     } else {
         vec![Line::from("No queue data available")]
@@ -456,7 +1023,6 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
     f.render_widget(ops_paragraph, right_chunks[0]);
 
     // Simple gauge for worker health
-    // Workers are considered healthy if they're registered (status is "idle" or "active")
     let worker_ratio = if !state.workers.is_empty() {
         let active = state.workers.iter()
             .filter(|w| w.status == "idle" || w.status.to_lowercase() == "active")
@@ -476,6 +1042,177 @@ fn draw_stats_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
         ));
     f.render_widget(gauge, right_chunks[1]);
 }
+
+fn draw_task_list_overlay(f: &mut Frame, state: &DashboardState, area: Rect) {
+    if let Some(ref task_list) = state.task_list {
+        let popup_width = 80.min(area.width.saturating_sub(4));
+        let popup_height = area.height.saturating_sub(8);
+
+        let x = (area.width.saturating_sub(popup_width)) / 2;
+        let y = (area.height.saturating_sub(popup_height)) / 2;
+
+        let popup_area = Rect {
+            x: x.max(2),
+            y: y.max(5),
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Clear area behind modal
+        f.render_widget(Clear, popup_area);
+
+        let title = format!(
+            "Tasks: {} (Page {}/{} - {} tasks)",
+            task_list.queue_name,
+            task_list.page + 1,
+            (task_list.total_available / task_list.page_size) + 1,
+            task_list.total_available
+        );
+
+        let rows: Vec<Row> = task_list
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(i, task)| {
+                let style = if i == task_list.selected_task {
+                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                Row::new(vec![
+                    Cell::from(shorten_id(&task.id, 10)),
+                    Cell::from(task.task_type.clone()),
+                    Cell::from(format!("{:?}", task.status)),
+                    Cell::from(task.retry_cnt.to_string()),
+                    Cell::from(format_timestamp(task.created_at)),
+                ])
+                .style(style)
+            })
+            .collect();
+
+        let table = Table::new(rows, &[
+            Constraint::Max(12),
+            Constraint::Max(25),
+            Constraint::Max(12),
+            Constraint::Max(8),
+            Constraint::Max(15),
+        ])
+        .header(
+            Row::new(vec!["ID", "Type", "Status", "Retry", "Created"])
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        )
+        .block(Block::default().title(title).borders(Borders::ALL))
+        .widths(&[
+            Constraint::Percentage(20),
+            Constraint::Percentage(35),
+            Constraint::Percentage(15),
+            Constraint::Percentage(15),
+            Constraint::Percentage(15),
+        ]);
+
+        f.render_widget(table, popup_area);
+
+        // Draw hint at bottom
+        let hint = Paragraph::new("↑↓: Navigate | Esc: Back | r: Refresh")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        let hint_area = Rect {
+            x: popup_area.x,
+            y: popup_area.bottom().saturating_sub(1),
+            width: popup_area.width,
+            height: 1,
+        };
+        f.render_widget(hint, hint_area);
+    }
+}
+
+fn draw_help_overlay(f: &mut Frame, area: Rect) {
+    let popup_width = 60;
+    let popup_height = 25;
+
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect {
+        x,
+        y,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    // Clear area behind modal
+    f.render_widget(Clear, popup_area);
+
+    let content = vec![
+        Line::from(vec![
+            Span::styled("Keyboard Shortcuts", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Navigation", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from("  ↑↓/←→    Navigate queue list"),
+        Line::from("  Enter    View tasks in selected queue"),
+        Line::from("  Esc      Return to main view / Clear status"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Queue Operations", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from("  p        Pause selected queue"),
+        Line::from("  r        Resume selected queue"),
+        Line::from("  f        Flush selected queue"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("General", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from("  ?        Show/hide this help"),
+        Line::from("  q        Quit dashboard"),
+        Line::from(""),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Press any key to close", Style::default().fg(Color::DarkGray)),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(content)
+        .block(
+            Block::default()
+                .title(" Help ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+        )
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+
+    f.render_widget(paragraph, popup_area);
+}
+
+fn draw_status_message(f: &mut Frame, status: &OperationStatus, area: Rect) {
+    let color = match status.status_type {
+        StatusType::Success => Color::Green,
+        StatusType::Error => Color::Red,
+        StatusType::Info => Color::Cyan,
+        StatusType::Warning => Color::Yellow,
+    };
+
+    let paragraph = Paragraph::new(status.message.as_str())
+        .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center);
+
+    // Draw at bottom of screen, above title bar
+    let msg_area = Rect {
+        x: 0,
+        y: area.height.saturating_sub(1),
+        width: area.width,
+        height: 1,
+    };
+    f.render_widget(paragraph, msg_area);
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
 fn style_for_count(count: u64) -> Style {
     if count > 1000 {
@@ -500,5 +1237,23 @@ fn shorten_string(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         format!("{}...", &s[..max_len - 3])
+    }
+}
+
+fn format_timestamp(timestamp: i64) -> String {
+    let dt = Local::now();
+    let now_timestamp = dt.timestamp();
+
+    let duration = now_timestamp.saturating_sub(timestamp);
+
+    if duration < 60 {
+        format!("{}s ago", duration)
+    } else if duration < 3600 {
+        format!("{}m ago", duration / 60)
+    } else if duration < 86400 {
+        format!("{}h ago", duration / 3600)
+    } else {
+        let dt = Local.timestamp_opt(timestamp, 0).unwrap();
+        dt.format("%m-%d %H:%M").to_string()
     }
 }
