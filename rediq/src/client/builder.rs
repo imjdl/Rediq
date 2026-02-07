@@ -100,12 +100,12 @@ impl Client {
             // Enqueue to priority queue (ZSet with priority as score)
             let pqueue_key: RedisKey = Keys::priority_queue(&queue).into();
             self.redis.zadd(pqueue_key, task_id.as_str().into(), priority as i64).await?;
-            tracing::debug!("Priority task enqueued: {} (priority: {})", task_id, priority);
+            tracing::debug!("Priority task enqueued: {} (priority: {}) to queue {}", task_id, priority, queue);
         } else {
             // Enqueue to regular queue (List)
             let queue_key: RedisKey = Keys::queue(&queue).into();
             self.redis.rpush(queue_key, task_id.as_str().into()).await?;
-            tracing::debug!("Task enqueued: {}", task_id);
+            tracing::debug!("Task enqueued: {} to queue {}", task_id, queue);
         }
 
         Ok(task_id)
