@@ -30,8 +30,6 @@ enum ViewMode {
     Main,
     /// Task list for selected queue
     TaskList,
-    /// History trend view
-    History,
     /// Help overlay
     Help,
 }
@@ -356,9 +354,6 @@ async fn run_dashboard(
                     ViewMode::TaskList => {
                         handle_task_list_input(state, key.code, inspector).await?;
                     }
-                    ViewMode::History => {
-                        handle_history_input(state);
-                    }
                     ViewMode::Help => {
                         handle_help_input(state);
                     }
@@ -426,11 +421,6 @@ async fn handle_main_input(
             state.view_mode = ViewMode::Help;
         }
 
-        // History view
-        KeyCode::Char('h') => {
-            state.view_mode = ViewMode::History;
-        }
-
         // Clear status with Esc
         KeyCode::Esc => {
             state.operation_status = None;
@@ -489,16 +479,6 @@ fn handle_help_input(state: &mut DashboardState) {
         ViewMode::Help => {
             // Close help on Esc, q, or ?
             state.show_help = false;
-            state.view_mode = ViewMode::Main;
-        }
-        _ => {}
-    }
-}
-
-fn handle_history_input(state: &mut DashboardState) {
-    match state.view_mode {
-        ViewMode::History => {
-            // Close history on Esc, h, or q
             state.view_mode = ViewMode::Main;
         }
         _ => {}
@@ -907,9 +887,6 @@ fn ui(f: &mut Frame, state: &DashboardState) {
             draw_main_view(f, state, area);
             draw_task_list_overlay(f, state, area);
         }
-        ViewMode::History => {
-            draw_history_view(f, state, area);
-        }
         ViewMode::Help => {
             draw_main_view(f, state, area);
             draw_help_overlay(f, area);
@@ -951,24 +928,40 @@ fn draw_main_view(f: &mut Frame, state: &DashboardState, area: Rect) {
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, Rect { x: 0, y: 0, width: area.width, height: 4 });
 
-    // Main layout
-    let chunks = Layout::default()
+    // Main layout - title bar + content (queues/workers/stats + history)
+    let remaining_height = area.height - 4;
+    let content_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([Constraint::Length(area.height - 12), Constraint::Length(8)].as_ref())
-        .split(Rect { x: 0, y: 4, width: area.width, height: area.height - 4 });
+        .constraints([
+            Constraint::Length(remaining_height - 14), // Main content
+            Constraint::Length(13),                     // History trends
+        ])
+        .split(Rect { x: 0, y: 4, width: area.width, height: remaining_height });
+
+    // Main content section - split vertically
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Ratio(2, 3), // Upper: queues + workers
+            Constraint::Ratio(1, 3), // Lower: stats
+        ])
+        .split(content_chunks[0]);
 
     // Upper section - queues and workers side by side
     let upper_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
-        .split(chunks[0]);
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(main_chunks[0]);
 
     draw_queues_panel(f, state, upper_chunks[0]);
     draw_workers_panel(f, state, upper_chunks[1]);
 
-    // Lower section - stats
-    draw_stats_panel(f, state, chunks[1]);
+    // Stats panel
+    draw_stats_panel(f, state, main_chunks[1]);
+
+    // History trends section
+    draw_history_trends(f, state, content_chunks[1]);
 }
 
 fn draw_queues_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
@@ -1306,7 +1299,6 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         ]),
         Line::from("  ↑↓/←→    Navigate queue list"),
         Line::from("  Enter    View tasks in selected queue"),
-        Line::from("  h        View history trends"),
         Line::from("  Esc      Return to main view / Clear status"),
         Line::from(""),
         Line::from(vec![
@@ -1342,120 +1334,8 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
 }
 
 // ============================================================================
-// History View Rendering
+// Sparkline Chart Rendering
 // ============================================================================
-
-/// Draw a title bar with the given text
-fn draw_title_bar(f: &mut Frame, area: Rect, text: &str) {
-    let time_str = Local::now().format("%H:%M:%S").to_string();
-    let title = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" "),
-            Span::styled(time_str, Style::default().fg(Color::DarkGray)),
-        ]),
-    ])
-    .block(Block::default().borders(Borders::ALL));
-    f.render_widget(title, area);
-}
-
-fn draw_history_view(f: &mut Frame, state: &DashboardState, area: Rect) {
-    // Split into header, content, and footer
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
-        .split(area);
-
-    // Header
-    draw_title_bar(f, chunks[0], "History Trends");
-
-    // Content - split into multiple sparkline charts
-    let content_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(8),
-        ])
-        .split(chunks[1]);
-
-    // Get the maximum value for each metric to scale the sparklines
-    let pending_max = state.history.get_values("pending").iter().copied().max().unwrap_or(1);
-    let active_max = state.history.get_values("active").iter().copied().max().unwrap_or(1);
-    let completed_max = state.history.get_values("completed").iter().copied().max().unwrap_or(1);
-    let dead_max = state.history.get_values("dead").iter().copied().max().unwrap_or(1);
-    let error_rate_max = state.history.get_values("error_rate").iter().copied().max().unwrap_or(1);
-
-    // Pending tasks sparkline
-    draw_sparkline_chart(
-        f,
-        content_chunks[0],
-        "Pending Tasks",
-        &state.history.get_values("pending"),
-        pending_max,
-        Color::Cyan,
-        state.history.oldest_age_secs("pending"),
-    );
-
-    // Active tasks sparkline
-    draw_sparkline_chart(
-        f,
-        content_chunks[1],
-        "Active Tasks",
-        &state.history.get_values("active"),
-        active_max,
-        Color::Green,
-        state.history.oldest_age_secs("active"),
-    );
-
-    // Completed tasks sparkline
-    draw_sparkline_chart(
-        f,
-        content_chunks[2],
-        "Completed Tasks",
-        &state.history.get_values("completed"),
-        completed_max,
-        Color::Blue,
-        state.history.oldest_age_secs("completed"),
-    );
-
-    // Dead letter queue sparkline
-    draw_sparkline_chart(
-        f,
-        content_chunks[3],
-        "Dead Letter Queue",
-        &state.history.get_values("dead"),
-        dead_max,
-        Color::Red,
-        state.history.oldest_age_secs("dead"),
-    );
-
-    // Error rate sparkline (values are percentage * 10, so divide by 10 for display)
-    let error_rate_values: Vec<u64> = state.history.get_values("error_rate");
-    let error_rate_display: Vec<u64> = error_rate_values.iter().map(|v| v / 10).collect();
-    let error_rate_max_display = (error_rate_max / 10).max(1);
-    draw_sparkline_chart(
-        f,
-        content_chunks[4],
-        "Error Rate (%)",
-        &error_rate_display,
-        error_rate_max_display,
-        Color::Yellow,
-        state.history.oldest_age_secs("error_rate"),
-    );
-
-    // Footer
-    let footer = Paragraph::new("Press Esc/h/q to return | ?: Help")
-        .style(Style::default().fg(Color::DarkGray))
-        .alignment(Alignment::Center);
-    f.render_widget(footer, chunks[2]);
-}
 
 fn draw_sparkline_chart(
     f: &mut Frame,
@@ -1484,6 +1364,102 @@ fn draw_sparkline_chart(
         .max(max_value.max(1));
 
     f.render_widget(sparkline, area);
+}
+
+/// Draw history trends section in main view
+fn draw_history_trends(f: &mut Frame, state: &DashboardState, area: Rect) {
+    // Get the maximum value for each metric to scale the sparklines
+    let pending_max = state.history.get_values("pending").iter().copied().max().unwrap_or(1);
+    let active_max = state.history.get_values("active").iter().copied().max().unwrap_or(1);
+    let completed_max = state.history.get_values("completed").iter().copied().max().unwrap_or(1);
+    let dead_max = state.history.get_values("dead").iter().copied().max().unwrap_or(1);
+    let error_rate_max = state.history.get_values("error_rate").iter().copied().max().unwrap_or(1);
+
+    // Split into 3 columns for better use of space
+    let chart_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    // Left column - Pending and Active
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+        .split(chart_chunks[0]);
+
+    // Center column - Completed and Dead
+    let center_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+        .split(chart_chunks[1]);
+
+    // Right column - Error rate (full height)
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(100)])
+        .split(chart_chunks[2]);
+
+    // Pending tasks sparkline
+    draw_sparkline_chart(
+        f,
+        left_chunks[0],
+        "Pending",
+        &state.history.get_values("pending"),
+        pending_max,
+        Color::Cyan,
+        state.history.oldest_age_secs("pending"),
+    );
+
+    // Active tasks sparkline
+    draw_sparkline_chart(
+        f,
+        left_chunks[1],
+        "Active",
+        &state.history.get_values("active"),
+        active_max,
+        Color::Green,
+        state.history.oldest_age_secs("active"),
+    );
+
+    // Completed tasks sparkline
+    draw_sparkline_chart(
+        f,
+        center_chunks[0],
+        "Completed",
+        &state.history.get_values("completed"),
+        completed_max,
+        Color::Blue,
+        state.history.oldest_age_secs("completed"),
+    );
+
+    // Dead letter queue sparkline
+    draw_sparkline_chart(
+        f,
+        center_chunks[1],
+        "Dead",
+        &state.history.get_values("dead"),
+        dead_max,
+        Color::Red,
+        state.history.oldest_age_secs("dead"),
+    );
+
+    // Error rate sparkline (values are percentage * 10, so divide by 10 for display)
+    let error_rate_values: Vec<u64> = state.history.get_values("error_rate");
+    let error_rate_display: Vec<u64> = error_rate_values.iter().map(|v| v / 10).collect();
+    let error_rate_max_display = (error_rate_max / 10).max(1);
+    draw_sparkline_chart(
+        f,
+        right_chunks[0],
+        "Error %",
+        &error_rate_display,
+        error_rate_max_display,
+        Color::Yellow,
+        state.history.oldest_age_secs("error_rate"),
+    );
 }
 
 fn draw_status_message(f: &mut Frame, status: &OperationStatus, area: Rect) {
