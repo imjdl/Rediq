@@ -5,24 +5,36 @@
 
 **Rediq** 是一个基于 Rust 的分布式任务队列框架，灵感来自 [Asynq](https://github.com/hibiken/asynq)。它提供了一个强大的、可用于生产环境的后台任务处理解决方案，使用 Redis 作为后端存储。
 
+## 为什么选择 Rediq？
+
+Rediq 简化了 Rust 应用中的后台任务处理。无论是发送邮件、处理支付、生成报表，还是处理任何异步工作，Rediq 都能提供可靠、可扩展的解决方案。
+
+### 核心优势
+
+- **简单易用的 API** - 直观的构建器模式，轻松创建任务
+- **生产就绪** - 经过实战验证，具备重试机制、死信队列和监控能力
+- **高性能** - 基于 Tokio 构建，采用高效的 Redis Pipeline 操作
+- **可观测性** - 内置 Prometheus 指标和 HTTP 端点
+- **灵活强大** - 支持优先级、延迟、Cron 和任务依赖
+
 ## 功能特性
 
-- **多队列支持** - 同时从多个队列处理任务
-- **优先级队列** - 支持按优先级执行任务（0-100，数字越小优先级越高）
-- **延迟任务** - 安排任务在指定延迟后执行
-- **周期性任务** - 支持 Cron 风格的周期性任务调度
-- **自动重试** - 可配置的重试机制，支持指数退避
-- **死信队列** - 失败的任务会被移动到死信队列
-- **任务依赖** - 定义任务执行之间的依赖关系
-- **中间件系统** - 内置中间件，支持日志、指标和自定义钩子
-- **Prometheus 指标** - 内置可观测性，可选 HTTP 端点
-- **Redis 高可用** - 支持 Redis Cluster 和 Sentinel
+| 特性 | 描述 |
+|---------|-------------|
+| **多队列支持** | 同时从多个队列并发处理任务，支持不同优先级 |
+| **优先级队列** | 基于优先级执行任务（0-100，数值越小优先级越高） |
+| **延迟任务** | 安排任务在指定延迟后执行 |
+| **周期性任务** | Cron 风格的周期性任务调度（`0 2 * * *`） |
+| **自动重试** | 可配置的重试机制，支持指数退避（2s、4s、8s...） |
+| **死信队列** | 失败任务自动移动到死信队列 |
+| **任务依赖** | 定义任务执行依赖关系（B 等待 A 完成后执行） |
+| **中间件系统** | 内置日志、指标中间件和自定义钩子支持 |
+| **Prometheus 指标** | 内置可观测性，可选 HTTP 端点（`/metrics`） |
+| **Redis 高可用** | 支持 Redis Cluster 和 Sentinel 实现高可用 |
 
 ## 快速开始
 
 ### 安装
-
-在 `Cargo.toml` 中添加：
 
 ```toml
 [dependencies]
@@ -30,152 +42,174 @@ rediq = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-### 基本用法
+### 基本示例
 
-#### 生产者（入队任务）
+**生产者（入队任务）：**
 
 ```rust
-use rediq::Client;
-use rediq::Task;
-use serde::{Deserialize, Serialize};
+use rediq::{Client, Task};
 
-#[derive(Serialize, Deserialize)]
-struct EmailPayload {
-    to: String,
-    subject: String,
-    body: String,
-}
+let client = Client::builder()
+    .redis_url("redis://localhost:6379")
+    .build()
+    .await?;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 创建客户端
-    let client = Client::builder()
-        .redis_url("redis://localhost:6379")
-        .build()
-        .await?;
+let task = Task::builder("email:send")
+    .queue("emails")
+    .payload(&serde_json::json!({
+        "to": "user@example.com",
+        "subject": "欢迎！"
+    }))?
+    .build()?;
 
-    // 创建并入队任务
-    let task = Task::builder("email:send")
-        .queue("default")
-        .payload(&EmailPayload {
-            to: "user@example.com".to_string(),
-            subject: "欢迎".to_string(),
-            body: "你好！".to_string(),
-        })?
-        .max_retry(5)
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
-
-    client.enqueue(task).await?;
-
-    Ok(())
-}
+client.enqueue(task).await?;
 ```
 
-#### 消费者（处理任务）
+**消费者（处理任务）：**
 
 ```rust
 use rediq::server::{Server, ServerBuilder};
 use rediq::processor::{Handler, Mux};
 use async_trait::async_trait;
-use rediq::Task;
 
 struct EmailHandler;
 
 #[async_trait]
 impl Handler for EmailHandler {
     async fn handle(&self, task: &Task) -> rediq::Result<()> {
-        // 处理任务
         println!("处理任务: {}", task.id);
+        // 您的任务处理逻辑
         Ok(())
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 构建服务器状态
-    let state = ServerBuilder::new()
-        .redis_url("redis://localhost:6379")
-        .queues(&["default", "critical"])
-        .concurrency(10)
-        .build()
-        .await?;
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .queues(&["emails"])
+    .concurrency(10)
+    .build()
+    .await?;
 
-    // 创建服务器
-    let server = Server::from(state);
+let server = Server::from(state);
+let mut mux = Mux::new();
+mux.handle("email:send", EmailHandler);
 
-    // 注册处理器
-    let mut mux = Mux::new();
-    mux.handle("email:send", EmailHandler);
-
-    // 运行服务器
-    server.run(mux).await?;
-
-    Ok(())
-}
+server.run(mux).await?;
 ```
 
-## 高级功能
+## 核心概念
+
+### 任务生命周期
+
+```
+┌──────────┐      ┌───────────┐      ┌──────────┐
+│  待处理   │ ───▶ │   处理中  │ ───▶ │  已完成  │
+│          │      │           │      │          │
+└──────────┘      └───────────┘      └──────────┘
+     │                   │
+     ▼                   ▼
+┌──────────┐      ┌───────────┐
+│  延迟中   │      │   重试中  │
+│          │      │           │
+└──────────┘      └───────────┘
+     │                   │
+     └───────────────────┘
+                 │
+                 ▼
+         ┌───────────┐
+         │   死信队列  │
+         └───────────┘
+```
+
+### 任务选项
+
+| 选项 | 类型 | 默认值 | 描述 |
+|--------|------|---------|-------------|
+| `queue` | `String` | `"default"` | 目标队列名称 |
+| `max_retry` | `u32` | `3` | 最大重试次数 |
+| `timeout` | `Duration` | `30s` | 任务超时时间 |
+| `delay` | `Duration` | `None` | 执行延迟 |
+| `priority` | `i32` | `50` | 优先级（0-100，越小越高） |
+| `cron` | `String` | `None` | Cron 表达式，用于周期性任务 |
+| `unique_key` | `String` | `None` | 用于去重的唯一键 |
+| `depends_on` | `Vec<String>` | `None` | 任务依赖 ID |
+
+## 高级用法
 
 ### 优先级队列
 
+优先处理紧急任务：
+
 ```rust
-let task = Task::builder("critical:task")
-    .queue("default")
+let task = Task::builder("urgent:payment")
+    .queue("payments")
     .priority(0)  // 最高优先级
-    .payload(&data)?
     .build()?;
 ```
 
 ### 延迟任务
 
+在指定延迟后执行：
+
 ```rust
 use std::time::Duration;
 
-let task = Task::builder("delayed:task")
-    .queue("default")
-    .delay(Duration::from_secs(300))  // 5分钟后执行
-    .payload(&data)?
+let task = Task::builder("scheduled:report")
+    .delay(Duration::from_secs(3600))  // 1 小时后执行
     .build()?;
 ```
 
-### 周期性任务（Cron）
+### 周期性任务
+
+按 Cron 调度执行：
 
 ```rust
-let task = Task::builder("scheduled:backup")
-    .queue("default")
-    .cron("0 2 * * *")  // 每天凌晨2点执行
-    .payload(&data)?
+let task = Task::builder("daily:cleanup")
+    .cron("0 2 * * *")  // 每天凌晨 2 点
     .build()?;
 ```
 
 ### 任务依赖
 
+按顺序执行任务：
+
 ```rust
 let task_b = Task::builder("process:b")
-    .queue("default")
-    .depends_on(&["task-a-id-123"])
-    .payload(&data)?
+    .depends_on(&["task-a-id"])
     .build()?;
+// B 将等待 A 完成后执行
 ```
 
 ### 中间件
 
+添加日志和指标：
+
 ```rust
-use rediq::middleware::{MiddlewareChain, LoggingMiddleware};
-use rediq::server::ServerBuilder;
+use rediq::middleware::{MiddlewareChain, LoggingMiddleware, MetricsMiddleware};
 
 let middleware = MiddlewareChain::new()
-    .add(LoggingMiddleware::new().with_details());
+    .add(LoggingMiddleware::new())
+    .add(MetricsMiddleware::new());
 
 let state = ServerBuilder::new()
-    .redis_url("redis://localhost:6379")
     .middleware(middleware)
     .build()
     .await?;
 ```
 
-### Redis 集群
+### HTTP 指标端点
+
+启用 Prometheus 指标：
+
+```rust
+let mut server = Server::from(state);
+server.enable_metrics("0.0.0.0:9090".parse()?);
+// 访问地址: http://localhost:9090/metrics
+```
+
+### Redis 高可用
+
+**Cluster 模式：**
 
 ```rust
 let client = Client::builder()
@@ -185,7 +219,7 @@ let client = Client::builder()
     .await?;
 ```
 
-### Redis 哨兵
+**Sentinel 模式：**
 
 ```rust
 let client = Client::builder()
@@ -195,133 +229,105 @@ let client = Client::builder()
     .await?;
 ```
 
-## 配置选项
-
-### 服务器选项
-
-| 选项 | 类型 | 默认值 | 描述 |
-|------|------|--------|------|
-| `redis_url` | `String` | `redis://localhost:6379` | Redis 连接 URL |
-| `queues` | `Vec<String>` | `["default"]` | 要消费的队列列表 |
-| `concurrency` | `usize` | `10` | 并发工作线程数 |
-| `heartbeat_interval` | `u64` | `5` | 工作线程心跳间隔（秒） |
-| `worker_timeout` | `u64` | `30` | 工作线程超时（秒） |
-| `dequeue_timeout` | `u64` | `2` | BLPOP 超时（秒） |
-| `poll_interval` | `u64` | `100` | 队列轮询间隔（毫秒） |
-
-### 任务选项
-
-| 选项 | 类型 | 默认值 | 描述 |
-|------|------|--------|------|
-| `queue` | `String` | `"default"` | 目标队列 |
-| `max_retry` | `u32` | `3` | 最大重试次数 |
-| `timeout` | `Duration` | `30s` | 任务超时时间 |
-| `delay` | `Duration` | `None` | 执行延迟 |
-| `priority` | `i32` | `50` | 优先级（0-100，越小越高） |
-| `unique_key` | `String` | `None` | 去重唯一键 |
-| `depends_on` | `Vec<String>` | `None` | 任务依赖 ID 列表 |
-
 ## CLI 工具
 
-Rediq 包含一个 CLI 工具用于管理队列：
+Rediq 包含一个队列管理 CLI 工具：
 
 ```bash
-# 列出队列
+# 实时仪表板
+rediq dash
+
+# 队列操作
 rediq queue list
+rediq queue inspect <name>
+rediq queue pause <name>
+rediq queue resume <name>
+rediq queue flush <name>
 
-# 暂停队列
-rediq queue pause default
+# 任务操作
+rediq task list <queue>
+rediq task inspect <id>
+rediq task cancel --id <id> --queue <queue>
 
-# 恢复队列
-rediq queue resume default
-
-# 列出工作线程
+# Worker 管理
 rediq worker list
+rediq worker inspect <id>
 
-# 查看任务详情
-rediq task show <task-id>
+# 统计信息
+rediq stats --queue <name>
 ```
 
-## 架构
+完整文档请参考 [CLI 指南](docs/cli.md)。
 
-```
-┌─────────┐     ┌─────────┐     ┌──────────┐
-│ Client  │────▶│  Redis  │────▶│ Worker   │
-│ (生产者)     │  队列   │     │(消费者) │
-└─────────┘     └─────────┘     └──────────┘
-                                      │
-                                      ▼
-                                ┌──────────┐
-                                │ Handler  │
-                                └──────────┘
-```
+## 文档
 
-### Redis 键结构
-
-| 键模式 | 类型 | 描述 |
-|--------|------|------|
-| `queue:{name}` | List | 待处理任务 |
-| `pqueue:{name}` | ZSet | 优先级队列 |
-| `active:{name}` | List | 正在处理 |
-| `delayed:{name}` | ZSet | 延迟任务 |
-| `retry:{name}` | ZSet | 等待重试 |
-| `dead:{name}` | List | 死信队列 |
-| `task:{id}` | Hash | 任务详情 |
-| `pending_deps:{id}` | Set | 待满足的依赖 |
-| `task_deps:{id}` | Set | 依赖此任务的任务 |
-
-## 项目结构
-
-```
-Rediq/
-├── rediq/           # 核心库
-│   ├── client/      # 生产者 SDK
-│   ├── server/      # 服务器和工作线程
-│   ├── task/        # 任务模型
-│   ├── processor/   # Handler trait 和路由器
-│   ├── middleware/  # 中间件系统
-│   ├── storage/     # Redis 存储层
-│   └── observability/ # 指标和监控
-├── rediq-cli/       # CLI 工具
-├── examples/        # 使用示例
-└── scripts/lua/     # Redis Lua 脚本
-```
+| 文档 | 描述 |
+|----------|-------------|
+| [快速入门](docs/getting-started.md) | 安装和第一个任务 |
+| [配置指南](docs/configuration.md) | 服务器、客户端和任务配置 |
+| [架构设计](docs/architecture.md) | 系统设计和内部原理 |
+| [API 参考](docs/api-reference.md) | 完整 API 文档 |
+| [部署指南](docs/deployment.md) | 生产环境部署 |
+| [故障排查](docs/troubleshooting.md) | 常见问题和解决方案 |
+| [性能测试](docs/benchmark.md) | 性能基准测试 |
 
 ## 示例
 
-查看 [examples](examples/) 目录了解更多示例：
-
-- `quickstart.rs` - 基本用法
-- `priority_queue_example.rs` - 优先级队列
-- `cron_example.rs` - 周期性任务
-- `dependency_example.rs` - 任务依赖
-- `cluster_example.rs` - Redis 集群
-- `sentinel_example.rs` - Redis 哨兵
-- `middleware_test.rs` - 中间件使用
-- `metrics_http_example.rs` - HTTP 指标端点
-
-## 开发
-
 ```bash
-# 构建
-cargo build
-
-# 运行测试
-cargo test
-
-# 运行示例
+# 基本用法
 cargo run --example quickstart
 
-# 格式化代码
-cargo fmt
+# 优先级队列
+cargo run --example priority_queue_example
 
-# 运行检查器
-cargo clippy
+# 周期性任务
+cargo run --example cron_example
+
+# 任务依赖
+cargo run --example dependency_example
+
+# 中间件
+cargo run --example middleware_test
+
+# HTTP 指标端点
+cargo run --example metrics_http_example
+
+# Redis 集群
+cargo run --example cluster_example
+
+# Redis 哨兵
+cargo run --example sentinel_example
 ```
+
+设置 `REDIS_URL` 环境变量以自定义 Redis 连接：
+
+```bash
+export REDIS_URL="redis://:password@host:6379/0"
+cargo run --example quickstart
+```
+
+## 项目状态
+
+Rediq 正在积极开发中，已可用于生产环境。当前状态：
+
+- ✅ 核心任务队列功能
+- ✅ 优先级队列
+- ✅ 延迟和周期性任务
+- ✅ 任务依赖
+- ✅ 中间件系统
+- ✅ Prometheus 指标
+- ✅ Redis Cluster/Sentinel 支持
+- ✅ CLI 工具和仪表板
+
+查看 [CHANGELOG.md](CHANGELOG.md) 了解版本历史。
 
 ## 贡献
 
-欢迎贡献！请随时提交 Pull Request。
+欢迎贡献！请随时：
+
+1. 报告问题
+2. 提出新功能建议
+3. 提交 Pull Request
 
 ## 许可证
 

@@ -5,24 +5,36 @@
 
 **Rediq** is a distributed task queue framework for Rust, inspired by [Asynq](https://github.com/hibiken/asynq). It provides a robust, production-ready solution for background task processing with Redis as the backend.
 
+## Why Rediq?
+
+Rediq simplifies background job processing in Rust applications. Whether you need to send emails, process payments, generate reports, or handle any asynchronous work, Rediq provides a reliable, scalable solution.
+
+### Key Benefits
+
+- **Simple API** - Intuitive builder pattern for task creation
+- **Production Ready** - Battle-tested with retry mechanisms, dead letter queues, and monitoring
+- **High Performance** - Built on Tokio with efficient Redis pipeline operations
+- **Observable** - Built-in Prometheus metrics and HTTP endpoint
+- **Flexible** - Support for priorities, delays, cron, and task dependencies
+
 ## Features
 
-- **Multiple Queue Support** - Process tasks from multiple queues concurrently
-- **Priority Queues** - Support for prioritized task execution (0-100, lower = higher priority)
-- **Delayed Tasks** - Schedule tasks to run after a specified delay
-- **Periodic Tasks** - Cron-style periodic task scheduling
-- **Automatic Retry** - Configurable retry mechanism with exponential backoff
-- **Dead Letter Queue** - Failed tasks are moved to a dead letter queue
-- **Task Dependencies** - Define task execution dependencies
-- **Middleware System** - Built-in middleware for logging, metrics, and custom hooks
-- **Prometheus Metrics** - Built-in observability with optional HTTP endpoint
-- **Redis HA** - Support for Redis Cluster and Sentinel
+| Feature | Description |
+|---------|-------------|
+| **Multiple Queues** | Process tasks from multiple queues concurrently with different priorities |
+| **Priority Queues** | Execute tasks based on priority (0-100, lower = higher priority) |
+| **Delayed Tasks** | Schedule tasks to run after a specified delay |
+| **Periodic Tasks** | Cron-style periodic task scheduling (`0 2 * * *`) |
+| **Automatic Retry** | Configurable retry mechanism with exponential backoff (2s, 4s, 8s...) |
+| **Dead Letter Queue** | Failed tasks are automatically moved to a dead letter queue |
+| **Task Dependencies** | Define task execution dependencies (B waits for A to complete) |
+| **Middleware System** | Built-in middleware for logging, metrics, and custom hooks |
+| **Prometheus Metrics** | Built-in observability with optional HTTP endpoint (`/metrics`) |
+| **Redis HA** | Support for Redis Cluster and Sentinel for high availability |
 
 ## Quick Start
 
 ### Installation
-
-Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -30,152 +42,174 @@ rediq = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-### Basic Usage
+### Basic Example
 
-#### Producer (Enqueue Tasks)
+**Producer (enqueue tasks):**
 
 ```rust
-use rediq::Client;
-use rediq::Task;
-use serde::{Deserialize, Serialize};
+use rediq::{Client, Task};
 
-#[derive(Serialize, Deserialize)]
-struct EmailPayload {
-    to: String,
-    subject: String,
-    body: String,
-}
+let client = Client::builder()
+    .redis_url("redis://localhost:6379")
+    .build()
+    .await?;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client
-    let client = Client::builder()
-        .redis_url("redis://localhost:6379")
-        .build()
-        .await?;
+let task = Task::builder("email:send")
+    .queue("emails")
+    .payload(&serde_json::json!({
+        "to": "user@example.com",
+        "subject": "Welcome!"
+    }))?
+    .build()?;
 
-    // Create and enqueue a task
-    let task = Task::builder("email:send")
-        .queue("default")
-        .payload(&EmailPayload {
-            to: "user@example.com".to_string(),
-            subject: "Welcome".to_string(),
-            body: "Hello!".to_string(),
-        })?
-        .max_retry(5)
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
-
-    client.enqueue(task).await?;
-
-    Ok(())
-}
+client.enqueue(task).await?;
 ```
 
-#### Consumer (Process Tasks)
+**Consumer (process tasks):**
 
 ```rust
 use rediq::server::{Server, ServerBuilder};
 use rediq::processor::{Handler, Mux};
 use async_trait::async_trait;
-use rediq::Task;
 
 struct EmailHandler;
 
 #[async_trait]
 impl Handler for EmailHandler {
     async fn handle(&self, task: &Task) -> rediq::Result<()> {
-        // Process the task
-        println!("Processing task: {}", task.id);
+        println!("Processing: {}", task.id);
+        // Your task processing logic here
         Ok(())
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Build server state
-    let state = ServerBuilder::new()
-        .redis_url("redis://localhost:6379")
-        .queues(&["default", "critical"])
-        .concurrency(10)
-        .build()
-        .await?;
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .queues(&["emails"])
+    .concurrency(10)
+    .build()
+    .await?;
 
-    // Create server
-    let server = Server::from(state);
+let server = Server::from(state);
+let mut mux = Mux::new();
+mux.handle("email:send", EmailHandler);
 
-    // Register handlers
-    let mut mux = Mux::new();
-    mux.handle("email:send", EmailHandler);
-
-    // Run server
-    server.run(mux).await?;
-
-    Ok(())
-}
+server.run(mux).await?;
 ```
 
-## Advanced Features
+## Core Concepts
 
-### Priority Queues
+### Task Lifecycle
+
+```
+┌──────────┐      ┌───────────┐      ┌──────────┐
+│  Pending │ ───▶ │   Active  │ ───▶ │ Completed│
+│          │      │           │      │          │
+└──────────┘      └───────────┘      └──────────┘
+     │                   │
+     ▼                   ▼
+┌──────────┐      ┌───────────┐
+│  Delayed │      │   Retry   │
+│          │      │           │
+└──────────┘      └───────────┘
+     │                   │
+     └───────────────────┘
+                 │
+                 ▼
+         ┌───────────┐
+         │    Dead    │
+         └───────────┘
+```
+
+### Task Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `queue` | `String` | `"default"` | Target queue name |
+| `max_retry` | `u32` | `3` | Maximum retry count |
+| `timeout` | `Duration` | `30s` | Task timeout |
+| `delay` | `Duration` | `None` | Execution delay |
+| `priority` | `i32` | `50` | Priority (0-100, lower = higher) |
+| `cron` | `String` | `None` | Cron expression for periodic tasks |
+| `unique_key` | `String` | `None` | Unique key for deduplication |
+| `depends_on` | `Vec<String>` | `None` | Task dependency IDs |
+
+## Advanced Usage
+
+### Priority Queue
+
+Process urgent tasks first:
 
 ```rust
-let task = Task::builder("critical:task")
-    .queue("default")
+let task = Task::builder("urgent:payment")
+    .queue("payments")
     .priority(0)  // Highest priority
-    .payload(&data)?
     .build()?;
 ```
 
-### Delayed Tasks
+### Delayed Task
+
+Execute after a delay:
 
 ```rust
 use std::time::Duration;
 
-let task = Task::builder("delayed:task")
-    .queue("default")
-    .delay(Duration::from_secs(300))  // Run after 5 minutes
-    .payload(&data)?
+let task = Task::builder("scheduled:report")
+    .delay(Duration::from_secs(3600))  // 1 hour later
     .build()?;
 ```
 
-### Periodic Tasks (Cron)
+### Periodic Task
+
+Run with cron schedule:
 
 ```rust
-let task = Task::builder("scheduled:backup")
-    .queue("default")
-    .cron("0 2 * * *")  // Run at 2 AM daily
-    .payload(&data)?
+let task = Task::builder("daily:cleanup")
+    .cron("0 2 * * *")  // Daily at 2 AM
     .build()?;
 ```
 
 ### Task Dependencies
 
+Execute tasks in order:
+
 ```rust
 let task_b = Task::builder("process:b")
-    .queue("default")
-    .depends_on(&["task-a-id-123"])
-    .payload(&data)?
+    .depends_on(&["task-a-id"])
     .build()?;
+// B will wait until A completes
 ```
 
 ### Middleware
 
+Add logging and metrics:
+
 ```rust
-use rediq::middleware::{MiddlewareChain, LoggingMiddleware};
-use rediq::server::ServerBuilder;
+use rediq::middleware::{MiddlewareChain, LoggingMiddleware, MetricsMiddleware};
 
 let middleware = MiddlewareChain::new()
-    .add(LoggingMiddleware::new().with_details());
+    .add(LoggingMiddleware::new())
+    .add(MetricsMiddleware::new());
 
 let state = ServerBuilder::new()
-    .redis_url("redis://localhost:6379")
     .middleware(middleware)
     .build()
     .await?;
 ```
 
-### Redis Cluster
+### HTTP Metrics Endpoint
+
+Enable Prometheus metrics:
+
+```rust
+let mut server = Server::from(state);
+server.enable_metrics("0.0.0.0:9090".parse()?);
+// Access at http://localhost:9090/metrics
+```
+
+### Redis High Availability
+
+**Cluster mode:**
 
 ```rust
 let client = Client::builder()
@@ -185,7 +219,7 @@ let client = Client::builder()
     .await?;
 ```
 
-### Redis Sentinel
+**Sentinel mode:**
 
 ```rust
 let client = Client::builder()
@@ -195,133 +229,105 @@ let client = Client::builder()
     .await?;
 ```
 
-## Configuration
-
-### Server Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `redis_url` | `String` | `redis://localhost:6379` | Redis connection URL |
-| `queues` | `Vec<String>` | `["default"]` | Queues to consume from |
-| `concurrency` | `usize` | `10` | Number of concurrent workers |
-| `heartbeat_interval` | `u64` | `5` | Worker heartbeat interval (seconds) |
-| `worker_timeout` | `u64` | `30` | Worker timeout (seconds) |
-| `dequeue_timeout` | `u64` | `2` | BLPOP timeout (seconds) |
-| `poll_interval` | `u64` | `100` | Queue poll interval (milliseconds) |
-
-### Task Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `queue` | `String` | `"default"` | Target queue |
-| `max_retry` | `u32` | `3` | Maximum retry count |
-| `timeout` | `Duration` | `30s` | Task timeout |
-| `delay` | `Duration` | `None` | Delay before execution |
-| `priority` | `i32` | `50` | Priority (0-100, lower = higher) |
-| `unique_key` | `String` | `None` | Unique key for deduplication |
-| `depends_on` | `Vec<String>` | `None` | Task dependency IDs |
-
 ## CLI Tool
 
-Rediq includes a CLI tool for managing queues:
+Rediq includes a CLI tool for queue management:
 
 ```bash
-# List queues
+# Real-time dashboard
+rediq dash
+
+# Queue operations
 rediq queue list
+rediq queue inspect <name>
+rediq queue pause <name>
+rediq queue resume <name>
+rediq queue flush <name>
 
-# Pause a queue
-rediq queue pause default
+# Task operations
+rediq task list <queue>
+rediq task inspect <id>
+rediq task cancel --id <id> --queue <queue>
 
-# Resume a queue
-rediq queue resume default
-
-# List workers
+# Worker management
 rediq worker list
+rediq worker inspect <id>
 
-# View task details
-rediq task show <task-id>
+# Statistics
+rediq stats --queue <name>
 ```
 
-## Architecture
+See [CLI Reference](docs/cli.md) for complete documentation.
 
-```
-┌─────────┐     ┌─────────┐     ┌──────────┐
-│ Client  │────▶│  Redis  │────▶│ Worker   │
-│ (Producer)    │  Queue  │     │(Consumer)│
-└─────────┘     └─────────┘     └──────────┘
-                                      │
-                                      ▼
-                                ┌──────────┐
-                                │ Handler  │
-                                └──────────┘
-```
+## Documentation
 
-### Redis Key Structure
-
-| Key Pattern | Type | Description |
-|-------------|------|-------------|
-| `queue:{name}` | List | Pending tasks |
-| `pqueue:{name}` | ZSet | Priority queue |
-| `active:{name}` | List | Currently processing |
-| `delayed:{name}` | ZSet | Delayed tasks |
-| `retry:{name}` | ZSet | Tasks awaiting retry |
-| `dead:{name}` | List | Dead letter queue |
-| `task:{id}` | Hash | Task details |
-| `pending_deps:{id}` | Set | Pending dependencies |
-| `task_deps:{id}` | Set | Dependent tasks |
-
-## Project Structure
-
-```
-Rediq/
-├── rediq/           # Core library
-│   ├── client/      # Producer SDK
-│   ├── server/      # Server and Worker
-│   ├── task/        # Task models
-│   ├── processor/   # Handler trait and router
-│   ├── middleware/  # Middleware system
-│   ├── storage/     # Redis storage layer
-│   └── observability/ # Metrics and monitoring
-├── rediq-cli/       # CLI tool
-├── examples/        # Usage examples
-└── scripts/lua/     # Redis Lua scripts
-```
+| Document | Description |
+|----------|-------------|
+| [Getting Started](docs/getting-started.md) | Installation and first tasks |
+| [Configuration](docs/configuration.md) | Server, client, and task configuration |
+| [Architecture](docs/architecture.md) | System design and internals |
+| [API Reference](docs/api-reference.md) | Complete API documentation |
+| [Deployment](docs/deployment.md) | Production deployment guide |
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [Benchmark](docs/benchmark.md) | Performance benchmarks |
 
 ## Examples
 
-See the [examples](examples/) directory for more examples:
-
-- `quickstart.rs` - Basic usage
-- `priority_queue_example.rs` - Priority queues
-- `cron_example.rs` - Periodic tasks
-- `dependency_example.rs` - Task dependencies
-- `cluster_example.rs` - Redis Cluster
-- `sentinel_example.rs` - Redis Sentinel
-- `middleware_test.rs` - Middleware usage
-- `metrics_http_example.rs` - HTTP metrics endpoint
-
-## Development
-
 ```bash
-# Build
-cargo build
-
-# Run tests
-cargo test
-
-# Run examples
+# Basic usage
 cargo run --example quickstart
 
-# Format code
-cargo fmt
+# Priority queues
+cargo run --example priority_queue_example
 
-# Run linter
-cargo clippy
+# Periodic tasks
+cargo run --example cron_example
+
+# Task dependencies
+cargo run --example dependency_example
+
+# Middleware
+cargo run --example middleware_test
+
+# HTTP metrics endpoint
+cargo run --example metrics_http_example
+
+# Redis Cluster
+cargo run --example cluster_example
+
+# Redis Sentinel
+cargo run --example sentinel_example
 ```
+
+Set `REDIS_URL` environment variable for custom Redis connections:
+
+```bash
+export REDIS_URL="redis://:password@host:6379/0"
+cargo run --example quickstart
+```
+
+## Project Status
+
+Rediq is actively developed and production-ready. Current status:
+
+- ✅ Core task queue functionality
+- ✅ Priority queues
+- ✅ Delayed and periodic tasks
+- ✅ Task dependencies
+- ✅ Middleware system
+- ✅ Prometheus metrics
+- ✅ Redis Cluster/Sentinel support
+- ✅ CLI tool with dashboard
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to:
+
+1. Report bugs
+2. Suggest new features
+3. Submit pull requests
 
 ## License
 
