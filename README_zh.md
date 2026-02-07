@@ -238,8 +238,15 @@ let client = Client::builder()
 Rediq 包含一个队列管理 CLI 工具：
 
 ```bash
-# 实时仪表板
+# 实时仪表板（带历史趋势）
 rediq dash
+
+# 仪表板功能：
+# - 实时队列统计（待处理、处理中、已完成、死信、重试）
+# - 实时历史趋势图表（Sparkline 可视化）
+# - 错误率追踪和可视化
+# - Worker 状态和健康监控
+# - 自动缩放图表及时间范围指示器
 
 # 队列操作
 rediq queue list
