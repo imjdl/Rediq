@@ -4,12 +4,123 @@ Complete guide for configuring Rediq servers and clients.
 
 ## Table of Contents
 
+- [Global Configuration](#global-configuration)
 - [Client Configuration](#client-configuration)
 - [Server Configuration](#server-configuration)
 - [Task Configuration](#task-configuration)
 - [Redis Configuration](#redis-configuration)
 - [Environment Variables](#environment-variables)
 - [Configuration Examples](#configuration-examples)
+
+---
+
+## Global Configuration
+
+Rediq provides a global configuration system for system-wide settings that affect task processing behavior.
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `max_payload_size` | `usize` | 512KB | Maximum task payload size in bytes |
+| `task_ttl` | `u64` | 86400 (24h) | Default TTL for task details stored in Redis |
+| `priority_range` | `(i32, i32)` | (0, 100) | Valid priority range (min, max) |
+| `default_max_retry` | `u32` | 3 | Default maximum retry count for tasks |
+| `default_timeout_secs` | `u64` | 30 | Default task timeout in seconds |
+
+### Setting Global Configuration
+
+```rust
+use rediq::config::{set_config, update_config, RediqConfig};
+
+// Method 1: Create and set a complete configuration
+let config = RediqConfig::new()
+    .with_max_payload_size(1024 * 1024)  // 1MB
+    .with_task_ttl(3600)                  // 1 hour
+    .with_priority_range(1, 10)           // 1-10 range
+    .with_default_max_retry(5)            // 5 retries
+    .with_default_timeout(60);            // 60 seconds
+
+set_config(config);
+```
+
+### Updating Existing Configuration
+
+```rust
+// Method 2: Update specific values (preserves other settings)
+update_config(|config| {
+    config
+        .with_max_payload_size(2 * 1024 * 1024)  // 2MB
+        .with_task_ttl(7200)                       // 2 hours
+});
+```
+
+### Reading Configuration
+
+```rust
+use rediq::config::{
+    get_config, get_max_payload_size, get_task_ttl,
+    get_priority_range, get_default_max_retry, get_default_timeout_secs
+};
+
+// Get full configuration
+let config = get_config();
+println!("Max payload: {} bytes", config.max_payload_size);
+
+// Or use convenience getters
+let max_size = get_max_payload_size();
+let ttl = get_task_ttl();
+let (min_prio, max_prio) = get_priority_range();
+let max_retry = get_default_max_retry();
+let timeout = get_default_timeout_secs();
+```
+
+### Priority Validation
+
+The global configuration provides priority validation:
+
+```rust
+use rediq::config::get_config;
+
+let config = get_config();
+
+// Validate a priority value
+match config.validate_priority(50) {
+    Ok(_) => println!("Priority is valid"),
+    Err(e) => println!("Invalid priority: {}", e),
+}
+
+// Clamp a value to the valid range
+let clamped = config.clamp_priority(150);  // Returns 100 for default range
+```
+
+### When to Use Global Configuration
+
+Global configuration is useful when you need to:
+
+1. **Increase payload limits** for tasks with large data
+2. **Adjust task TTL** for longer/shorter retention
+3. **Customize priority ranges** for specific use cases
+4. **Set default retry/timeout** behavior across all tasks
+
+### Example: Large Payload Configuration
+
+```rust
+use rediq::config::set_config;
+use rediq::config::RediqConfig;
+
+// Configure for handling large payloads (e.g., file processing)
+set_config(RediqConfig::new()
+    .with_max_payload_size(10 * 1024 * 1024)  // 10MB
+    .with_task_ttl(7 * 86400)                // 7 days
+    .with_default_timeout(300)                // 5 minutes
+);
+
+// Now all tasks can use these settings
+let large_task = Task::builder("file:process")
+    .payload(&large_data)  // Up to 10MB
+    .build()?;
+```
 
 ---
 
