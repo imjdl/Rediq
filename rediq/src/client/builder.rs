@@ -350,6 +350,77 @@ impl Client {
 
         Ok(cancelled)
     }
+
+    /// Retry a failed task from the dead letter queue
+    ///
+    /// Moves a task from the dead letter queue back to the pending queue for reprocessing.
+    /// Resets the task's retry count and status.
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to retry
+    /// * `queue_name` - The name of the queue
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Task was found and successfully re-queued
+    /// * `Ok(false)` - Task was not found in the dead queue
+    /// * `Err(_)` - An error occurred during the operation
+    pub async fn retry_task(&self, task_id: &str, queue_name: &str) -> Result<bool> {
+        use crate::task::TaskStatus;
+
+        // Try to find the task in dead queue
+        let dead_key: RedisKey = Keys::dead(queue_name).into();
+        let dead_tasks = self.redis.lrange(dead_key.clone(), 0, -1).await?;
+
+        let mut task_found = false;
+        let mut task_data: Option<Task> = None;
+
+        // Search for the task in dead queue
+        for task_id_str in dead_tasks {
+            if task_id_str == task_id {
+                task_found = true;
+
+                // Load the task details
+                let task_key: RedisKey = Keys::task(task_id).into();
+                if let Some(data) = self.redis.get(task_key).await? {
+                    let bytes = data.as_bytes()
+                        .ok_or_else(|| Error::Serialization("Task data is not bytes".into()))?;
+
+                    task_data = Some(rmp_serde::from_slice(bytes)
+                        .map_err(|e| Error::Serialization(e.to_string()))?);
+                }
+                break;
+            }
+        }
+
+        if !task_found {
+            tracing::warn!("Task '{}' not found in dead queue '{}'", task_id, queue_name);
+            return Ok(false);
+        }
+
+        let mut task = task_data.ok_or_else(|| Error::Validation("Failed to load task data".into()))?;
+
+        // Reset task state for retry
+        task.status = TaskStatus::Pending;
+        task.retry_cnt = 0;
+        task.last_error = None;
+        task.processed_at = None;
+
+        // Update task in Redis
+        let task_key: RedisKey = Keys::task(task_id).into();
+        let new_data = rmp_serde::to_vec(&task)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        self.redis.set(task_key, RedisValue::Bytes(new_data.into())).await?;
+
+        // Remove from dead queue
+        self.redis.lrem(dead_key, task_id.into(), 1).await?;
+
+        // Add to pending queue
+        let queue_key: RedisKey = Keys::queue(queue_name).into();
+        self.redis.rpush(queue_key, task_id.into()).await?;
+
+        tracing::info!("Task '{}' re-queued for processing in queue '{}'", task_id, queue_name);
+        Ok(true)
+    }
 }
 
 /// Client builder
