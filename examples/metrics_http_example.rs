@@ -69,11 +69,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    let redis_url = std::env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
     tracing::info!("Starting HTTP Metrics Example");
 
     // Build server state
     let state = ServerBuilder::new()
-        .redis_url("redis://192.168.1.128:6379")
+        .redis_url(&redis_url)
         .queues(&["default", "critical"])
         .concurrency(5)
         .build()
@@ -93,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sleep(Duration::from_secs(2)).await;
 
         let client = Client::builder()
-            .redis_url("redis://192.168.1.128:6379")
+            .redis_url(&redis_url)
             .build()
             .await
             .unwrap();
