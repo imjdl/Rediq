@@ -8,11 +8,11 @@ use rediq::{
     Task,
 };
 use async_trait::async_trait;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Test handler with metrics integration
 struct TestHandler {
+    #[allow(dead_code)]
     metrics: RediqMetrics,
 }
 
