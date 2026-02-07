@@ -28,6 +28,9 @@ comfy-table = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 
+# Async utilities
+futures = "0.3"
+
 # Color output
 color-eyre = "0.6"
 
