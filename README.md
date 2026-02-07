@@ -17,6 +17,10 @@ Rediq simplifies background job processing in Rust applications. Whether you nee
 - **Observable** - Built-in Prometheus metrics and HTTP endpoint
 - **Flexible** - Support for priorities, delays, cron, and task dependencies
 
+### Dashboard
+
+![Rediq Dashboard](img/dash.png)
+
 ## Features
 
 | Feature | Description |
