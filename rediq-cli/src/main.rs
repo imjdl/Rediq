@@ -85,7 +85,8 @@ async fn main() -> color_eyre::Result<()> {
             stats::show(&client, queue).await?;
         }
         Commands::Dash { interval } => {
-            if let Err(e) = dashboard::run(&redis_url, interval).await {
+            let client = create_client(&redis_url).await?;
+            if let Err(e) = dashboard::run(&redis_url, interval, &client).await {
                 eprintln!("Dashboard error: {}", e);
                 return Err(color_eyre::eyre::eyre!(e));
             }
