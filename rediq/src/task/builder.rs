@@ -3,6 +3,7 @@
 //! Provides fluent API for building tasks.
 
 use crate::{Error, Result};
+use crate::config;
 use super::{Task, TaskOptions, TaskStatus};
 use chrono::Utc;
 use serde::Serialize;
@@ -165,12 +166,12 @@ impl TaskBuilder {
             return Err(Error::Validation("payload cannot be empty".into()));
         }
 
-        // Validate payload size
-        const MAX_PAYLOAD_SIZE: usize = 512 * 1024;
-        if self.payload.len() > MAX_PAYLOAD_SIZE {
+        // Validate payload size (use global config)
+        let max_payload_size = config::get_max_payload_size();
+        if self.payload.len() > max_payload_size {
             return Err(Error::Validation(format!(
                 "payload exceeds {}KB limit (got {}B)",
-                MAX_PAYLOAD_SIZE / 1024,
+                max_payload_size / 1024,
                 self.payload.len()
             )));
         }

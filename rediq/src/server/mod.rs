@@ -112,7 +112,7 @@ impl Server {
     ///     .await?;
     ///
     /// let mut server = Server::from(state);
-    /// server.enable_metrics("0.0.0.0:9090".parse::<std::net::SocketAddr>().unwrap())?;
+    /// server.enable_metrics_on("0.0.0.0:9090")?;
     /// # Ok(())
     /// # }
     /// ```
@@ -120,10 +120,42 @@ impl Server {
         let metrics = RediqMetrics::new()
             .map_err(|e| Error::Metrics(e.to_string()))?;
         self.metrics = Some(Arc::new(metrics));
-        self.metrics_bind_address = Some(bind_address.into());
-        tracing::info!("Metrics enabled on http://{}", self.metrics_bind_address.as_ref().unwrap());
-        tracing::info!("Metrics endpoint: http://{}/metrics", self.metrics_bind_address.as_ref().unwrap());
+        let addr = bind_address.into();
+        self.metrics_bind_address = Some(addr.clone());
+        tracing::info!("Metrics enabled on http://{}", addr);
+        tracing::info!("Metrics endpoint: http://{}/metrics", addr);
         Ok(())
+    }
+
+    /// Enable metrics collection with HTTP endpoint (accepts string address)
+    ///
+    /// This is a convenience method that accepts a string address and parses it internally.
+    ///
+    /// # Arguments
+    /// * `bind_address` - Address string to bind the metrics server (e.g., "0.0.0.0:9090")
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::server::{Server, ServerBuilder};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let state = ServerBuilder::new()
+    ///     .redis_url("redis://localhost:6379")
+    ///     .queues(&["default"])
+    ///     .build()
+    ///     .await?;
+    ///
+    /// let mut server = Server::from(state);
+    /// server.enable_metrics_on("0.0.0.0:9090")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_metrics_on(&mut self, bind_address: impl Into<String>) -> Result<()> {
+        let addr_str = bind_address.into();
+        let addr = addr_str.parse::<SocketAddr>()
+            .map_err(|e| Error::Config(format!("Invalid metrics address '{}': {}", addr_str, e)))?;
+        self.enable_metrics(addr)
     }
 
     /// Run the server

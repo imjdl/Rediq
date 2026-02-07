@@ -62,6 +62,7 @@
 #![warn(rust_2018_idioms)]
 
 // Public module exports
+pub mod config;
 pub mod error;
 pub mod task;
 
