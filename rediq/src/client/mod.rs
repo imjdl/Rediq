@@ -7,6 +7,7 @@ pub mod builder;
 use crate::{
     storage::{Keys, RedisClient},
     task::{TaskStatus, Task},
+    progress::TaskProgress,
     Error, Result,
 };
 use fred::prelude::RedisKey;
@@ -42,6 +43,9 @@ impl Inspector {
         let task: Task = rmp_serde::from_slice(bytes)
             .map_err(|e| Error::Serialization(e.to_string()))?;
 
+        // Try to get progress (optional)
+        let progress = self.get_task_progress(task_id).await.ok().flatten();
+
         Ok(TaskInfo {
             id: task.id,
             task_type: task.task_type,
@@ -52,6 +56,7 @@ impl Inspector {
             created_at: task.created_at,
             enqueued_at: task.enqueued_at,
             processed_at: task.processed_at,
+            progress,
         })
     }
 
@@ -174,6 +179,53 @@ impl Inspector {
             Ok(false)
         }
     }
+
+    /// Get task progress
+    ///
+    /// Returns progress information if available.
+    pub async fn get_task_progress(&self, task_id: &str) -> Result<Option<TaskProgress>> {
+        let key: RedisKey = Keys::progress(task_id).into();
+
+        match self.redis.hgetall(key).await {
+            Ok(values) if !values.is_empty() => {
+                // Parse Hash fields (values are in [field1, value1, field2, value2, ...] format)
+                let mut current = 0u32;
+                let mut message: Option<String> = None;
+                let mut updated_at = 0i64;
+
+                let mut iter = values.iter().peekable();
+                while let Some(field) = iter.next() {
+                    if let Some(value) = iter.next() {
+                        if let Some(field_name) = field.as_str() {
+                            match field_name.as_ref() {
+                                "current" => {
+                                    if let Some(val_str) = value.as_str() {
+                                        current = val_str.parse().unwrap_or(0);
+                                    }
+                                }
+                                "message" => {
+                                    message = value.as_string();
+                                }
+                                "updated_at" => {
+                                    if let Some(val_str) = value.as_str() {
+                                        updated_at = val_str.parse().unwrap_or(0);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                Ok(Some(TaskProgress {
+                    current,
+                    message,
+                    updated_at,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
 }
 
 /// Task information
@@ -197,6 +249,9 @@ pub struct TaskInfo {
     pub enqueued_at: Option<i64>,
     /// Processed timestamp
     pub processed_at: Option<i64>,
+    /// Task progress (optional)
+    #[serde(default)]
+    pub progress: Option<TaskProgress>,
 }
 
 /// Queue statistics

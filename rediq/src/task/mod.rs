@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub mod builder;
+pub mod progress_ext;
 
 pub use builder::TaskBuilder;
+pub use progress_ext::TaskProgressExt;
 
 /// Task status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

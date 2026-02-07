@@ -774,7 +774,21 @@ async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut Dashboar
 async fn refresh_task_list(state: &mut DashboardState, inspector: &rediq::client::Inspector) {
     if let Some(ref mut task_list) = state.task_list {
         match inspector.list_tasks(&task_list.queue_name, task_list.page_size).await {
-            Ok(tasks) => {
+            Ok(mut tasks) => {
+                // Fetch progress for each task concurrently
+                let progress_futures: Vec<_> = tasks.iter()
+                    .map(|task| inspector.get_task_progress(&task.id))
+                    .collect();
+
+                let results = futures::future::join_all(progress_futures).await;
+
+                // Attach progress to tasks
+                for (task, progress_result) in tasks.iter_mut().zip(results) {
+                    if let Ok(progress) = progress_result {
+                        task.progress = progress;
+                    }
+                }
+
                 let len = tasks.len();
                 task_list.total_available = len;
                 task_list.tasks = tasks;
@@ -1225,10 +1239,22 @@ fn draw_task_list_overlay(f: &mut Frame, state: &DashboardState, area: Rect) {
                     Style::default()
                 };
 
+                // Progress bar display
+                let progress_str = if let Some(ref progress) = task.progress {
+                    let bars = "==========";
+                    let filled = (progress.current as f64 / 100.0 * 10.0) as usize;
+                    let filled_bars = &bars[..filled.min(10)];
+                    let empty_bars = &"          "[..(10 - filled.min(10))];
+                    format!("[{}{}] {}%", filled_bars, empty_bars, progress.current)
+                } else {
+                    "N/A".to_string()
+                };
+
                 Row::new(vec![
                     Cell::from(shorten_id(&task.id, 10)),
                     Cell::from(task.task_type.clone()),
                     Cell::from(format!("{:?}", task.status)),
+                    Cell::from(progress_str),
                     Cell::from(task.retry_cnt.to_string()),
                     Cell::from(format_timestamp(task.created_at)),
                 ])
@@ -1240,20 +1266,22 @@ fn draw_task_list_overlay(f: &mut Frame, state: &DashboardState, area: Rect) {
             Constraint::Max(12),
             Constraint::Max(25),
             Constraint::Max(12),
+            Constraint::Max(16),
             Constraint::Max(8),
             Constraint::Max(15),
         ])
         .header(
-            Row::new(vec!["ID", "Type", "Status", "Retry", "Created"])
+            Row::new(vec!["ID", "Type", "Status", "Progress", "Retry", "Created"])
                 .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         )
         .block(Block::default().title(title).borders(Borders::ALL))
         .widths(&[
-            Constraint::Percentage(20),
-            Constraint::Percentage(35),
-            Constraint::Percentage(15),
-            Constraint::Percentage(15),
-            Constraint::Percentage(15),
+            Constraint::Percentage(18),
+            Constraint::Percentage(30),
+            Constraint::Percentage(12),
+            Constraint::Percentage(18),
+            Constraint::Percentage(10),
+            Constraint::Percentage(12),
         ]);
 
         f.render_widget(table, popup_area);

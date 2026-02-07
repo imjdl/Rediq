@@ -51,8 +51,11 @@ let client = Client::builder()
 | `enqueue()` | `task: Task` | `impl Future<Output = Result<String>>` | Enqueue a single task |
 | `enqueue_batch()` | `tasks: Vec<Task>` | `impl Future<Output = Result<Vec<String>>>` | Enqueue multiple tasks |
 | `get_task()` | `id: &str` | `impl Future<Output = Result<Option<TaskInfo>>>` | Get task information |
+| `get_task_progress()` | `id: &str` | `impl Future<Output = Result<Option<TaskProgress>>>` | Get task progress |
 | `get_tasks()` | `queue: &str, start, size` | `impl Future<Output = Result<Vec<TaskInfo>>>` | List tasks in queue |
 | `cancel_task()` | `id: &str` | `impl Future<Output = Result<bool>>` | Cancel a pending task |
+| `inspector()` | - | `Inspector` | Get task inspector |
+| `flush_queue()` | `queue: &str` | `impl Future<Output = Result<()>>` | Flush all tasks from queue |
 
 #### Example
 
@@ -367,6 +370,77 @@ async fn process_task(task: &Task) -> Result<()> {
     }
 }
 ```
+
+---
+
+## Progress Tracking API
+
+### TaskProgressExt Trait
+
+Extension trait for tasks to access progress reporting during execution.
+
+```rust
+use rediq::task::TaskProgressExt;
+```
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `progress()` | `Option<ProgressContext>` | Get progress reporter for this task |
+
+#### Example
+
+```rust
+#[async_trait]
+impl Handler for MyHandler {
+    async fn handle(&self, task: &Task) -> Result<()> {
+        if let Some(progress) = task.progress() {
+            progress.report(50).await?;
+            progress.report_with_message(75, Some("Processing...")).await?;
+        }
+        Ok(())
+    }
+}
+```
+
+### ProgressContext
+
+Progress reporter for task handlers.
+
+#### Methods
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `report()` | `current: u32` | `Result<()>` | Report progress (0-100) |
+| `report_with_message()` | `current: u32, message: Option<&str>` | `Result<()>` | Report progress with message |
+| `increment()` | `delta: u32` | `Result<()>` | Increase progress by delta |
+| `current()` | - | `u32` | Get current progress value |
+
+#### Example
+
+```rust
+// Report percentage
+progress.report(50).await?;
+
+// Report with message
+progress.report_with_message(75, Some("Processing file")).await?;
+
+// Increment by 10
+progress.increment(10).await?;
+```
+
+### TaskProgress
+
+Task progress information structure.
+
+#### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `current` | `u32` | Current progress (0-100) |
+| `message` | `Option<String>` | Optional progress message |
+| `updated_at` | `i64` | Last update timestamp (Unix) |
 
 ---
 

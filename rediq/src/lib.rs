@@ -84,6 +84,10 @@ pub mod storage;
 // Observability
 pub mod observability;
 
+// Progress tracking
+pub mod progress;
+
 // Re-export common types
 pub use error::{Error, Result};
 pub use task::Task;
+pub use progress::{TaskProgress, ProgressContext, ProgressConfig};
