@@ -8,7 +8,7 @@ edition = "2021"
 rust-version = "1.70"
 authors = ["Rediq Contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/example/rediq"
+repository = "https://github.com/imjdl/rediq"
 
 [workspace.dependencies]
 # Async runtime
