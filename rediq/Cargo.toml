@@ -6,9 +6,17 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation = "https://docs.rs/rediq"
 description = "A distributed task queue framework for Rust based on Redis"
 keywords = ["queue", "redis", "async", "task", "distributed"]
 categories = ["asynchronous", "concurrency", "database"]
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-Apache-2.0",
+]
 
 [dependencies]
 # Async runtime
