@@ -145,27 +145,49 @@ async fn run_dashboard(
 async fn refresh_data(inspector: &rediq::client::Inspector, state: &mut DashboardState) {
     let now = Instant::now();
 
-    // Fetch queues
-    if let Ok(queues) = inspector.list_queues().await {
-        let mut new_queues = Vec::new();
-        for queue in queues {
-            if let Ok(stats) = inspector.queue_stats(&queue).await {
-                new_queues.push(QueueStats {
-                    name: queue,
-                    pending: stats.pending,
-                    active: stats.active,
-                    delayed: stats.delayed,
-                    retry: stats.retried,
-                    dead: stats.dead,
-                    completed: stats.completed,
-                });
+    // Fetch queues and workers concurrently
+    let (queues_result, workers_result) = tokio::join!(
+        async {
+            if let Ok(queues) = inspector.list_queues().await {
+                // Fetch all queue stats concurrently
+                let queue_futures: Vec<_> = queues
+                    .iter()
+                    .map(|q| inspector.queue_stats(q))
+                    .collect();
+
+                let results = futures::future::join_all(queue_futures).await;
+
+                let mut new_queues = Vec::new();
+                for (i, stats_result) in results.into_iter().enumerate() {
+                    if let Ok(stats) = stats_result {
+                        new_queues.push(QueueStats {
+                            name: queues[i].clone(),
+                            pending: stats.pending,
+                            active: stats.active,
+                            delayed: stats.delayed,
+                            retry: stats.retried,
+                            dead: stats.dead,
+                            completed: stats.completed,
+                        });
+                    }
+                }
+                Some(new_queues)
+            } else {
+                None
             }
+        },
+        async {
+            inspector.list_workers().await.ok()
         }
+    );
+
+    // Update queues
+    if let Some(new_queues) = queues_result {
         state.queues = new_queues;
     }
 
-    // Fetch workers
-    if let Ok(workers) = inspector.list_workers().await {
+    // Update workers
+    if let Some(workers) = workers_result {
         let mut new_workers = Vec::new();
         let mut total = 0;
         for worker in workers {
