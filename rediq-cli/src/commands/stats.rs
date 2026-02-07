@@ -28,7 +28,7 @@ pub async fn show(client: &Client, queue_name: String) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_stats_display() {
