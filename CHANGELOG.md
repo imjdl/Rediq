@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-02-08
+
+### Fixed
+- **Security**: Fixed priority queue atomicity issue with improved retry logic
+- **Security**: Fixed global configuration deadlock risk in `update_config()`
+- **Security**: Enhanced task cancellation to check all queue states (pending, active, delayed, retry, dead, priority)
+- **Security**: Added `ProgressGuard` to prevent memory leaks in progress tracking
+- **Security**: Dynamic heartbeat TTL calculation to prevent false worker death detection
+
+### Changed
+- `cancel_task()` now returns `Option<String>` indicating where task was found
+- `update_config()` signature changed to use `FnOnce(&mut RediqConfig)` instead of consuming/returning config
+- Improved logging for concurrent dequeue operations
+
+[0.1.2]: https://github.com/imjdl/rediq/releases/tag/v0.1.2
+
 ## [0.1.1] - 2026-02-07
 
 ### Added
