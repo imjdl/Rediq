@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Core library
-rediq = { path = "../rediq" }
+rediq = { version = "0.1.2", path = "../rediq" }
 
 # Async runtime
 tokio = { workspace = true }
