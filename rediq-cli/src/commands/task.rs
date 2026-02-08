@@ -131,12 +131,12 @@ async fn cancel_task(client: &Client, id: String, queue: String) -> Result<()> {
     println!("Cancel task: {} (queue: {})", id, queue);
 
     match client.cancel_task(&id, &queue).await {
-        Ok(true) => {
-            println!("  ✓ Task cancelled successfully");
+        Ok(Some(status)) => {
+            println!("  ✓ Task cancelled successfully from {} queue", status);
         }
-        Ok(false) => {
-            println!("  ! Task not found in pending queue");
-            println!("    The task may be active, delayed, or retrying");
+        Ok(None) => {
+            println!("  ! Task not found in any queue");
+            println!("    Checked: pending, active, delayed, retry, dead, priority");
         }
         Err(e) => {
             eprintln!("Error: {}", e);

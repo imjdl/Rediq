@@ -159,6 +159,7 @@ impl Worker {
         let id = self.id.clone();
         let redis = self.state.redis.clone();
         let interval = Duration::from_secs(self.state.config.heartbeat_interval);
+        let worker_timeout = self.state.config.worker_timeout;
         let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
@@ -167,7 +168,7 @@ impl Worker {
             while !shutdown.load(Ordering::Relaxed) {
                 ticker.tick().await;
 
-                if let Err(e) = Self::update_heartbeat_for(&id, &redis).await {
+                if let Err(e) = Self::update_heartbeat_for(&id, &redis, worker_timeout).await {
                     tracing::error!("Heartbeat update failed: {}", e);
                 }
             }
@@ -176,18 +177,29 @@ impl Worker {
 
     /// Update heartbeat for this worker
     async fn update_heartbeat(&self) -> Result<()> {
-        Self::update_heartbeat_for(&self.id, &self.state.redis).await
+        Self::update_heartbeat_for(&self.id, &self.state.redis, self.state.config.worker_timeout).await
     }
 
     /// Static method to update heartbeat for any worker
-    async fn update_heartbeat_for(worker_id: &str, redis: &RedisClient) -> Result<()> {
+    ///
+    /// # Important
+    ///
+    /// The heartbeat TTL is calculated based on worker_timeout to ensure that
+    /// workers are not incorrectly marked as dead due to network delays or
+    /// temporary processing slowdowns.
+    async fn update_heartbeat_for(worker_id: &str, redis: &RedisClient, worker_timeout: u64) -> Result<()> {
         let heartbeat_key: RedisKey = Keys::meta_heartbeat(worker_id).into();
         let now = Utc::now().timestamp();
 
         redis.set(heartbeat_key.clone(), now.to_string().into()).await?;
 
-        // Set expiration to 2x heartbeat interval
-        redis.expire(heartbeat_key, 60).await?;
+        // Set expiration based on worker_timeout
+        // Use 2x the timeout to provide a safety margin for network issues
+        // This ensures healthy workers aren't incorrectly marked as dead
+        let ttl = worker_timeout * 2;
+        redis.expire(heartbeat_key, ttl).await?;
+
+        tracing::trace!("Heartbeat updated for worker {}, TTL: {}s", worker_id, ttl);
 
         Ok(())
     }
@@ -283,7 +295,7 @@ impl Worker {
         let active_key: RedisKey = Keys::active(queue).into();
         let pause_key: RedisKey = Keys::pause(queue).into();
         // Use a dummy key prefix for the task (the script constructs the actual task key)
-        let dummy_key: RedisKey = format!("rediq:task:*").into();
+        let dummy_key: RedisKey = "rediq:task:*".to_string().into();
         let task_ttl = crate::config::get_task_ttl() as usize;
 
         // Use pdequeue.lua for atomic dequeue (check pause + zrange + zrem + lpush)

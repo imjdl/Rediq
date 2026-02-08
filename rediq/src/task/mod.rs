@@ -14,10 +14,11 @@ pub use builder::TaskBuilder;
 pub use progress_ext::TaskProgressExt;
 
 /// Task status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     /// Pending to be processed
+    #[default]
     Pending,
     /// Currently being processed
     Active,
@@ -29,12 +30,6 @@ pub enum TaskStatus {
     Retry,
     /// In dead letter queue
     Dead,
-}
-
-impl Default for TaskStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl std::fmt::Display for TaskStatus {

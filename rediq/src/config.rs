@@ -141,12 +141,28 @@ pub fn set_config(config: RediqConfig) {
 ///     config.with_max_payload_size(1024 * 1024) // 1MB
 /// });
 /// ```
+///
+/// # Implementation Note
+///
+/// This function takes the write lock directly to avoid potential deadlock scenarios
+/// that could occur with the previous implementation which acquired read and write
+/// locks separately. The modifier now receives a mutable reference instead of
+/// consuming and returning a RediqConfig.
 pub fn update_config<F>(modifier: F)
 where
-    F: FnOnce(RediqConfig) -> RediqConfig,
+    F: FnOnce(&mut RediqConfig),
 {
-    let current = get_config();
-    set_config(modifier(current));
+    let mut global = GLOBAL_CONFIG
+        .write()
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to write global config: {}", e);
+            std::process::exit(1);
+        });
+
+    // Modify the config in place, avoiding the clone
+    modifier(&mut global);
+
+    tracing::info!("Global Rediq configuration updated");
 }
 
 /// Get a specific configuration value
@@ -243,7 +259,9 @@ mod tests {
         assert_eq!(get_config().max_payload_size, 2048);
 
         // Update with modifier
-        update_config(|c| c.with_task_ttl(7200));
+        update_config(|c| {
+            c.task_ttl = 7200;
+        });
         assert_eq!(get_config().task_ttl, 7200);
         assert_eq!(get_config().max_payload_size, 2048); // Should be preserved
 

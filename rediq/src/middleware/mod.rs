@@ -49,6 +49,7 @@ impl MiddlewareChain {
     }
 
     /// Add middleware to the chain
+    #[allow(clippy::should_implement_trait)]
     pub fn add<M: Middleware + 'static>(mut self, middleware: M) -> Self {
         self.middlewares.push(Arc::new(middleware));
         self

@@ -320,37 +320,93 @@ impl Client {
 
     /// Cancel a task
     ///
-    /// Attempts to cancel a task by removing it from the queue.
-    /// Returns true if the task was found and cancelled, false otherwise.
-    pub async fn cancel_task(&self, task_id: &str, queue_name: &str) -> Result<bool> {
-        // Try to remove from pending queue
-        let queue_key: RedisKey = Keys::queue(queue_name).into();
-        let removed = self.redis.lrem(queue_key, task_id.into(), 1).await?;
+    /// Attempts to cancel a task by removing it from all possible queue states.
+    /// Checks pending, active, delayed, retry, dead, and priority queues.
+    ///
+    /// Returns the cancellation status:
+    /// - `Ok(Some(status))` - Task was cancelled, status indicates where it was found
+    /// - `Ok(None)` - Task was not found in any queue
+    pub async fn cancel_task(&self, task_id: &str, queue_name: &str) -> Result<Option<String>> {
+        use crate::storage::Keys;
 
-        if removed > 0 {
-            // Task was in pending queue, clean up
-            // Delete task details
-            let task_key: RedisKey = Keys::task(task_id).into();
-            self.redis.del(vec![task_key]).await?;
+        // Define all possible queue types to check
+        // Each tuple contains (queue_key_function, status_name, is_sorted_set)
+        let queue_checks: Vec<(fn(&str) -> String, &str, bool)> = vec![
+            (Keys::queue, "pending", false),
+            (Keys::active, "active", false),
+            (Keys::delayed, "delayed", true),
+            (Keys::retry, "retry", true),
+            (Keys::dead, "dead", false),
+            (Keys::priority_queue, "priority", true),
+        ];
 
-            tracing::info!("Task '{}' cancelled from queue '{}'", task_id, queue_name);
-            Ok(true)
-        } else {
-            // Task not found in pending queue
-            // It might be in active, delayed, or retry queues
-            // For now, we only support cancelling pending tasks
-            tracing::warn!("Task '{}' not found in pending queue '{}'", task_id, queue_name);
-            Ok(false)
+        for (key_fn, status, is_sorted) in queue_checks {
+            let queue_key: RedisKey = key_fn(queue_name).into();
+
+            // Check if the key exists first to avoid unnecessary operations
+            if !self.redis.exists(queue_key.clone()).await? {
+                continue;
+            }
+
+            let removed = if is_sorted {
+                // For sorted sets (delayed, retry, priority)
+                // zrem returns Result<bool>
+                self.redis.zrem(queue_key, task_id.into()).await?
+            } else {
+                // For lists (pending, active, dead)
+                // lrem returns u64 (count of removed elements), convert to bool
+                self.redis.lrem(queue_key, task_id.into(), 1).await? > 0
+            };
+
+            if removed {
+                // Task was found and removed, clean up related data
+                let task_key: RedisKey = Keys::task(task_id).into();
+                self.redis.del(vec![task_key.clone()]).await?;
+
+                // Clean up dependencies
+                let deps_key: RedisKey = Keys::pending_deps(task_id).into();
+                self.redis.del(vec![deps_key]).await?;
+
+                let task_deps_key: RedisKey = Keys::task_deps(task_id).into();
+                self.redis.del(vec![task_deps_key]).await?;
+
+                // Clean up progress tracking
+                let progress_key: RedisKey = Keys::progress(task_id).into();
+                self.redis.del(vec![progress_key]).await?;
+
+                tracing::info!(
+                    "Task '{}' cancelled from {} queue '{}'",
+                    task_id,
+                    status,
+                    queue_name
+                );
+                return Ok(Some(status.to_string()));
+            }
         }
+
+        // Task not found in any queue
+        tracing::debug!(
+            "Task '{}' not found in any queue for '{}'",
+            task_id,
+            queue_name
+        );
+        Ok(None)
     }
 
     /// Cancel a task with deduplication key cleanup
     ///
     /// Cancels a task and removes its unique key from the deduplication set.
-    pub async fn cancel_task_with_unique(&self, task_id: &str, queue_name: &str, unique_key: Option<&str>) -> Result<bool> {
-        let cancelled = self.cancel_task(task_id, queue_name).await?;
+    ///
+    /// Returns the cancellation status (see cancel_task for details).
+    pub async fn cancel_task_with_unique(
+        &self,
+        task_id: &str,
+        queue_name: &str,
+        unique_key: Option<&str>,
+    ) -> Result<Option<String>> {
+        let result = self.cancel_task(task_id, queue_name).await?;
 
-        if cancelled {
+        if result.is_some() {
             if let Some(key) = unique_key {
                 // Remove from deduplication set
                 let dedup_key: RedisKey = Keys::dedup(queue_name).into();
@@ -358,7 +414,7 @@ impl Client {
             }
         }
 
-        Ok(cancelled)
+        Ok(result)
     }
 
     /// Retry a failed task from the dead letter queue

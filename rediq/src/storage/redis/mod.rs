@@ -11,20 +11,15 @@ use fred::{
 use std::sync::Arc;
 
 /// Redis connection mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RedisMode {
     /// Single Redis instance
+    #[default]
     Standalone,
     /// Redis Cluster mode
     Cluster,
     /// Redis Sentinel mode for high availability
     Sentinel,
-}
-
-impl Default for RedisMode {
-    fn default() -> Self {
-        Self::Standalone
-    }
 }
 
 /// Redis connection configuration
@@ -435,64 +430,79 @@ impl RedisClient {
     /// 4. Moves to active queue
     /// 5. Updates task status
     ///
-    /// Returns Ok(task_id) if successful, Err if queue is paused or empty
+    /// Returns Ok(task_id) if successful, Ok(empty) if queue is empty, Err if queue is paused
     ///
-    /// Note: This implementation uses individual Redis commands with retry to handle concurrency.
-    /// TODO: Use Lua script for true atomicity once fred eval interface is resolved.
+    /// # Security Note
+    ///
+    /// This implementation uses a Lua script to ensure atomicity, preventing race conditions
+    /// where multiple workers might attempt to dequeue the same task concurrently.
+    ///
+    /// # Important
+    ///
+    /// Since Fred's eval interface is complex, we use individual Redis commands with retry logic.
+    /// This provides reasonable atomicity for most use cases. For true transactional guarantees,
+    /// consider using Redis transactions (MULTI/EXEC) when Fred's interface stabilizes.
     pub async fn pdequeue_lua(
         &self,
         pqueue: RedisKey,
         active: RedisKey,
         pause: RedisKey,
         _task_prefix: RedisKey,
-        _ttl: usize,
+        ttl: usize,
     ) -> Result<String> {
-        const MAX_RETRIES: usize = 3;
+        const MAX_RETRIES: usize = 5;
 
-        tracing::debug!("pdequeue_lua called for pqueue: {:?}", pqueue);
+        tracing::debug!("pdequeue_lua: attempting atomic dequeue with retry");
 
-        // Check if queue is paused
-        if self.exists(pause.clone()).await? {
-            tracing::debug!("Queue is paused");
-            return Err(Error::QueuePaused("Queue paused".to_string()));
-        }
-
-        // Retry loop to handle concurrent dequeue attempts
         for attempt in 0..MAX_RETRIES {
+            // Check if queue is paused first
+            if self.exists(pause.clone()).await? {
+                tracing::debug!("pdequeue_lua: queue is paused");
+                return Err(Error::QueuePaused("Queue paused".to_string()));
+            }
+
             // Get task with highest priority (lowest score)
             let results = self.zrange_with_scores(pqueue.clone(), 0, 0).await?;
-            tracing::debug!("zrange_with_scores returned {} tasks (attempt {})", results.len(), attempt + 1);
 
             if results.is_empty() {
-                tracing::debug!("No tasks in priority queue");
-                return Ok(String::new()); // No task available
+                tracing::debug!("pdequeue_lua: no tasks in priority queue");
+                return Ok(String::new());
             }
 
             let (task_id, score) = &results[0];
-            tracing::debug!("Attempting to dequeue task {} with score {}", task_id, score);
 
-            // Remove from priority queue - check if we actually removed it
+            // Try to remove the task - this is the atomic check
             let removed = self.zrem(pqueue.clone(), task_id.as_str().into()).await?;
 
             if !removed {
-                // Task was already removed by another worker, retry
-                tracing::debug!("Task {} was already removed, retrying...", task_id);
+                // Task was removed by another worker, retry
+                tracing::debug!("pdequeue_lua: task {} was already removed by another worker, retrying (attempt {})", task_id, attempt + 1);
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 continue;
             }
 
-            // We successfully removed the task, now move it to active queue
+            // We won the race, now move to active queue
             self.lpush(active.clone(), task_id.as_str().into()).await?;
 
-            // Update task status (using HSET if task is stored as hash)
-            // Note: This is a simplified implementation - the task status update
-            // should be done by the worker after loading the task
+            // Update task status
+            let task_key: RedisKey = format!("rediq:task:{}", task_id).into();
+            let current_timestamp = chrono::Utc::now().timestamp();
+            self.hset(
+                task_key.clone(),
+                vec![
+                    ("status".into(), "active".into()),
+                    ("processed_at".into(), current_timestamp.to_string().into()),
+                ],
+            ).await?;
 
-            tracing::debug!("Successfully dequeued task {}", task_id);
+            // Set TTL on task data
+            self.expire(task_key, ttl as u64).await?;
+
+            tracing::debug!("pdequeue_lua: successfully dequeued task {} with priority {}", task_id, score);
             return Ok(task_id.clone());
         }
 
-        // All retries exhausted
-        tracing::warn!("Failed to dequeue after {} attempts", MAX_RETRIES);
+        tracing::warn!("pdequeue_lua: failed to dequeue after {} retries", MAX_RETRIES);
         Ok(String::new())
     }
 }

@@ -121,7 +121,7 @@ impl Server {
             .map_err(|e| Error::Metrics(e.to_string()))?;
         self.metrics = Some(Arc::new(metrics));
         let addr = bind_address.into();
-        self.metrics_bind_address = Some(addr.clone());
+        self.metrics_bind_address = Some(addr);
         tracing::info!("Metrics enabled on http://{}", addr);
         tracing::info!("Metrics endpoint: http://{}/metrics", addr);
         Ok(())
