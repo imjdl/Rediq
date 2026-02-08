@@ -9,6 +9,11 @@ repository.workspace = true
 description = "CLI tool for Rediq distributed task queue"
 keywords = ["cli", "queue", "redis"]
 categories = ["command-line-utilities"]
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+]
 
 [[bin]]
 name = "rediq"
