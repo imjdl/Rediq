@@ -60,6 +60,12 @@ pub async fn register(redis: &RedisClient, task_id: &str, deps: &[String]) -> Re
 ///
 /// # Returns
 /// Number of dependent tasks that were enqueued
+///
+/// # Reliability Note
+///
+/// This function includes error recovery: if enqueuing a dependent task fails,
+/// it continues processing other dependents rather than aborting entirely.
+/// Failed dependents can be recovered by a manual re-run of dependency checking.
 pub async fn check_dependents(redis: &RedisClient, completed_task_id: &str) -> Result<usize> {
     // Get tasks that depend on the completed task
     let task_deps_key: RedisKey = Keys::task_deps(completed_task_id).into();
@@ -72,6 +78,7 @@ pub async fn check_dependents(redis: &RedisClient, completed_task_id: &str) -> R
     tracing::debug!("Task {} has {} dependent tasks", completed_task_id, dependents.len());
 
     let mut enqueued_count = 0;
+    let mut failed_count = 0;
 
     for dependent_id in dependents {
         let dependent_id_str = dependent_id.as_str().to_string();
@@ -84,24 +91,49 @@ pub async fn check_dependents(redis: &RedisClient, completed_task_id: &str) -> R
         let remaining_deps: u64 = redis.scard(pending_deps_key.clone()).await?;
 
         if remaining_deps == 0 {
-            // All dependencies satisfied, load and enqueue the task
-            if let Some(task_data) = redis.get(Keys::task(&dependent_id_str).into()).await? {
-                let bytes = task_data.as_bytes()
-                    .ok_or_else(|| Error::Serialization("Task data is not bytes".into()))?;
+            // All dependencies satisfied, get queue name and enqueue
+            let task_key: RedisKey = Keys::task(&dependent_id_str).into();
 
-                let task: crate::Task = rmp_serde::from_slice(bytes)
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
+            // Get queue name from hash field (more efficient than deserializing entire task)
+            match redis.hget(task_key.clone(), "queue".into()).await? {
+                Some(queue_value) => {
+                    // Get queue name as string slice
+                    let queue_name = match queue_value.as_bytes() {
+                        Some(bytes) => std::str::from_utf8(bytes)
+                            .map_err(|e| Error::Serialization(format!("Invalid queue name: {}", e)))?,
+                        None => {
+                            tracing::warn!("Task {} has invalid queue field, skipping", dependent_id);
+                            failed_count += 1;
+                            // Clean up to prevent infinite retry
+                            let _ = redis.del(vec![pending_deps_key]).await;
+                            continue;
+                        }
+                    };
 
-                // Enqueue the task to its queue
-                let queue_key: RedisKey = Keys::queue(&task.queue).into();
-                redis.rpush(queue_key, dependent_id.as_str().into()).await?;
+                    // Enqueue the task to its queue
+                    let queue_key: RedisKey = Keys::queue(queue_name).into();
+                    match redis.rpush(queue_key, dependent_id.as_str().into()).await {
+                        Ok(_) => {
+                            tracing::info!("Task {} enqueued to queue '{}' after all dependencies satisfied", dependent_id, queue_name);
 
-                tracing::info!("Task {} enqueued after all dependencies satisfied", dependent_id);
+                            // Clean up pending deps key
+                            let _ = redis.del(vec![pending_deps_key]).await;
 
-                // Clean up pending deps key
-                redis.del(vec![pending_deps_key]).await?;
-
-                enqueued_count += 1;
+                            enqueued_count += 1;
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to enqueue dependent task {}: {}", dependent_id, e);
+                            failed_count += 1;
+                            // Don't clean up pending_deps so this can be retried
+                        }
+                    }
+                }
+                None => {
+                    tracing::warn!("Task {} not found, skipping", dependent_id);
+                    failed_count += 1;
+                    // Clean up to prevent infinite retry
+                    let _ = redis.del(vec![pending_deps_key]).await;
+                }
             }
         } else {
             tracing::debug!("Task {} still has {} pending dependencies", dependent_id, remaining_deps);
@@ -110,6 +142,10 @@ pub async fn check_dependents(redis: &RedisClient, completed_task_id: &str) -> R
 
     // Clean up the task deps key for the completed task
     redis.del(vec![task_deps_key]).await?;
+
+    if failed_count > 0 {
+        tracing::warn!("{} dependent tasks failed to enqueue, may require manual retry", failed_count);
+    }
 
     Ok(enqueued_count)
 }

@@ -102,7 +102,7 @@ impl Keys {
 
     /// Pending dependencies Key (Hash)
     /// Maps task_id -> set of pending dependency task IDs
-    /// Example: redik:pending_deps:{task_id}
+    /// Example: rediq:pending_deps:{task_id}
     pub fn pending_deps(task_id: &str) -> String {
         format!("{}:pending_deps:{}", PREFIX, task_id)
     }

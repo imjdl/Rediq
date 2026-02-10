@@ -59,9 +59,19 @@ impl Client {
         let task_data = rmp_serde::to_vec(&task)
             .map_err(|e| Error::Serialization(e.to_string()))?;
 
-        // Store task details
+        // Store task details (both data and queue name for dependency resolution)
         let task_key: RedisKey = Keys::task(&task_id).into();
-        self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+        // Store as separate hash fields for better atomicity support
+        self.redis.hset(
+            task_key.clone(),
+            vec![
+                ("data".into(), RedisValue::Bytes(task_data.into())),
+                ("queue".into(), queue.as_str().into()),
+            ],
+        ).await?;
+        // Set TTL on task details
+        let task_ttl = config::get_task_ttl() as u64;
+        self.redis.expire(task_key, task_ttl).await?;
 
         // Handle dependencies - if task has dependencies, don't enqueue to main queue yet
         if let Some(deps) = deps {
@@ -125,7 +135,16 @@ impl Client {
         let task_data = rmp_serde::to_vec(&task)
             .map_err(|e| Error::Serialization(e.to_string()))?;
         let task_key: RedisKey = Keys::task(&task_id).into();
-        self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+        // Store as separate hash fields for better atomicity support
+        self.redis.hset(
+            task_key.clone(),
+            vec![
+                ("data".into(), RedisValue::Bytes(task_data.into())),
+                ("queue".into(), queue.as_str().into()),
+            ],
+        ).await?;
+        let task_ttl = config::get_task_ttl() as u64;
+        self.redis.expire(task_key, task_ttl).await?;
 
         // Add to delayed queue
         let delayed_key: RedisKey = Keys::delayed(&queue).into();
@@ -164,7 +183,16 @@ impl Client {
 
         // Store task details with priority
         let task_key: RedisKey = Keys::task(&task_id).into();
-        self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+        // Store as separate hash fields for better atomicity support
+        self.redis.hset(
+            task_key.clone(),
+            vec![
+                ("data".into(), RedisValue::Bytes(task_data.into())),
+                ("queue".into(), queue.as_str().into()),
+            ],
+        ).await?;
+        let task_ttl = config::get_task_ttl() as u64;
+        self.redis.expire(task_key, task_ttl).await?;
 
         // Add to priority queue (ZSet with priority as score)
         let pqueue_key: RedisKey = Keys::priority_queue(&queue).into();
@@ -212,7 +240,16 @@ impl Client {
 
         // Store task details
         let task_key: RedisKey = Keys::task(&task_id).into();
-        self.redis.set(task_key, RedisValue::Bytes(task_data.into())).await?;
+        // Store as separate hash fields for better atomicity support
+        self.redis.hset(
+            task_key.clone(),
+            vec![
+                ("data".into(), RedisValue::Bytes(task_data.into())),
+                ("queue".into(), queue.as_str().into()),
+            ],
+        ).await?;
+        let task_ttl = config::get_task_ttl() as u64;
+        self.redis.expire(task_key, task_ttl).await?;
 
         // Add to cron queue (score = next scheduled time)
         let cron_key: RedisKey = Keys::cron_queue(&queue).into();
@@ -447,7 +484,7 @@ impl Client {
 
                 // Load the task details
                 let task_key: RedisKey = Keys::task(task_id).into();
-                if let Some(data) = self.redis.get(task_key).await? {
+                if let Some(data) = self.redis.hget(task_key.clone(), "data".into()).await? {
                     let bytes = data.as_bytes()
                         .ok_or_else(|| Error::Serialization("Task data is not bytes".into()))?;
 
@@ -475,7 +512,16 @@ impl Client {
         let task_key: RedisKey = Keys::task(task_id).into();
         let new_data = rmp_serde::to_vec(&task)
             .map_err(|e| Error::Serialization(e.to_string()))?;
-        self.redis.set(task_key, RedisValue::Bytes(new_data.into())).await?;
+        // Store as separate hash fields
+        self.redis.hset(
+            task_key.clone(),
+            vec![
+                ("data".into(), RedisValue::Bytes(new_data.into())),
+                ("queue".into(), RedisValue::Bytes(queue_name.to_string().into_bytes().into())),
+            ],
+        ).await?;
+        let task_ttl = config::get_task_ttl() as u64;
+        self.redis.expire(task_key, task_ttl).await?;
 
         // Remove from dead queue
         self.redis.lrem(dead_key, task_id.into(), 1).await?;

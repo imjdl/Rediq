@@ -9,6 +9,7 @@
 -- ARGV[2]: unique_key (optional, empty string means disabled)
 -- ARGV[3]: task_data (serialized task data)
 -- ARGV[4]: task_ttl (optional, TTL in seconds for task details, default 86400)
+-- ARGV[5]: queue_name (the queue name for this task, used by dependency resolution)
 
 local queue_key = KEYS[1]
 local dedup_key = KEYS[2]
@@ -17,6 +18,7 @@ local task_id = ARGV[1]
 local unique_key = ARGV[2]
 local task_data = ARGV[3]
 local task_ttl = tonumber(ARGV[4]) or 86400
+local queue_name = ARGV[5]
 
 -- Deduplication check
 if unique_key and unique_key ~= '' then
@@ -32,14 +34,15 @@ if redis.call('EXISTS', task_key) == 1 then
     return {err = 'ERR_TASK_EXISTS'}
 end
 
--- Store task details
+-- Store task details (both data and queue name for dependency resolution)
 redis.call('HSET', task_key, 'data', task_data)
+redis.call('HSET', task_key, 'queue', queue_name)
 redis.call('EXPIRE', task_key, task_ttl)
 
 -- Add task_id to queue
 redis.call('RPUSH', queue_key, task_id)
 
 -- Register queue
-redis.call('SADD', 'rediq:meta:queues', queue_key:match('rediq:queue:(.+)'))
+redis.call('SADD', 'rediq:meta:queues', queue_name)
 
 return {ok = task_id}

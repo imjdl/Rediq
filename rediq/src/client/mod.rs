@@ -32,7 +32,9 @@ impl Inspector {
     /// Get task details
     pub async fn get_task(&self, task_id: &str) -> Result<TaskInfo> {
         let key: RedisKey = Keys::task(task_id).into();
-        let data = self.redis.get(key).await?.ok_or(Error::TaskNotFound(task_id.to_string()))?;
+        // Get task data from hash field (stored as 'data' field)
+        let data = self.redis.hget(key.clone(), "data".into()).await?
+            .ok_or(Error::TaskNotFound(task_id.to_string()))?;
 
         // Get task data from Redis
         let bytes = data.as_bytes().ok_or_else(|| {

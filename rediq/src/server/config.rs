@@ -29,6 +29,11 @@ pub struct ServerConfig {
     /// Worker timeout (seconds) - worker considered dead if no heartbeat
     pub worker_timeout: u64,
 
+    /// Heartbeat TTL multiplier - heartbeat TTL is calculated as worker_timeout * multiplier
+    /// This provides a safety margin for network delays and processing slowdowns.
+    /// Default is 2.0, meaning the heartbeat TTL is twice the worker timeout.
+    pub heartbeat_ttl_multiplier: f64,
+
     /// Dequeue timeout (seconds) - BLPOP timeout
     pub dequeue_timeout: u64,
 
@@ -51,6 +56,7 @@ impl Default for ServerConfig {
             concurrency: 10,
             heartbeat_interval: 5,
             worker_timeout: 30,
+            heartbeat_ttl_multiplier: 2.0,
             dequeue_timeout: 2,
             poll_interval: 100,
             server_name: format!("rediq-server-{}", Uuid::new_v4()),
@@ -202,6 +208,28 @@ impl ServerBuilder {
     #[must_use]
     pub fn worker_timeout(mut self, seconds: u64) -> Self {
         self.config.worker_timeout = seconds;
+        self
+    }
+
+    /// Set the heartbeat TTL multiplier
+    ///
+    /// The heartbeat TTL is calculated as `worker_timeout * multiplier`.
+    /// This provides a safety margin for network delays and processing slowdowns.
+    /// Default is 2.0. Higher values provide more margin but slower detection of dead workers.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rediq::server::ServerBuilder;
+    /// let builder = ServerBuilder::new()
+    ///     .heartbeat_ttl_multiplier(3.0);  // 3x safety margin
+    /// ```
+    #[must_use]
+    pub fn heartbeat_ttl_multiplier(mut self, multiplier: f64) -> Self {
+        if multiplier <= 1.0 {
+            tracing::warn!("heartbeat_ttl_multiplier should be > 1.0 for reliable operation, got {}", multiplier);
+        }
+        self.config.heartbeat_ttl_multiplier = multiplier;
         self
     }
 

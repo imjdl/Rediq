@@ -102,30 +102,34 @@ static GLOBAL_CONFIG: Lazy<RwLock<RediqConfig>> =
     Lazy::new(|| RwLock::new(RediqConfig::default()));
 
 /// Get the current global configuration
+///
+/// Returns a cloned copy of the current global configuration.
+/// If the lock is poisoned (which indicates a serious bug), a default
+/// configuration is returned and an error is logged.
 pub fn get_config() -> RediqConfig {
     GLOBAL_CONFIG
         .read()
+        .map(|guard| guard.clone())
         .unwrap_or_else(|e| {
-            tracing::error!("Failed to read global config: {}", e);
-            std::process::exit(1);
+            tracing::error!("Failed to read global config (lock poisoned): {}. Using default configuration.", e);
+            RediqConfig::default()
         })
-        .clone()
 }
 
 /// Set the global configuration
 ///
-/// # Panics
-///
-/// Panics if the global configuration lock is poisoned (which indicates a serious bug).
+/// If the lock is poisoned (which indicates a serious bug), an error is logged
+/// and this function returns without modifying the configuration.
 pub fn set_config(config: RediqConfig) {
-    let mut global = GLOBAL_CONFIG
-        .write()
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to write global config: {}", e);
-            std::process::exit(1);
-        });
-    *global = config;
-    tracing::info!("Global Rediq configuration updated");
+    match GLOBAL_CONFIG.write() {
+        Ok(mut global) => {
+            *global = config;
+            tracing::info!("Global Rediq configuration updated");
+        }
+        Err(e) => {
+            tracing::error!("Failed to write global config (lock poisoned): {}. Configuration was not updated.", e);
+        }
+    }
 }
 
 /// Update the global configuration with a modifier function
@@ -138,7 +142,7 @@ pub fn set_config(config: RediqConfig) {
 /// use rediq::config::update_config;
 ///
 /// update_config(|config| {
-///     config.with_max_payload_size(1024 * 1024) // 1MB
+///     config.max_payload_size = 1024 * 1024; // 1MB
 /// });
 /// ```
 ///
@@ -146,23 +150,23 @@ pub fn set_config(config: RediqConfig) {
 ///
 /// This function takes the write lock directly to avoid potential deadlock scenarios
 /// that could occur with the previous implementation which acquired read and write
-/// locks separately. The modifier now receives a mutable reference instead of
-/// consuming and returning a RediqConfig.
+/// locks separately. The modifier receives a mutable reference for in-place modification.
+///
+/// If the lock is poisoned (which indicates a serious bug), an error is logged
+/// and this function returns without modifying the configuration.
 pub fn update_config<F>(modifier: F)
 where
     F: FnOnce(&mut RediqConfig),
 {
-    let mut global = GLOBAL_CONFIG
-        .write()
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to write global config: {}", e);
-            std::process::exit(1);
-        });
-
-    // Modify the config in place, avoiding the clone
-    modifier(&mut global);
-
-    tracing::info!("Global Rediq configuration updated");
+    match GLOBAL_CONFIG.write() {
+        Ok(mut global) => {
+            modifier(&mut global);
+            tracing::info!("Global Rediq configuration updated");
+        }
+        Err(e) => {
+            tracing::error!("Failed to update global config (lock poisoned): {}. Configuration was not updated.", e);
+        }
+    }
 }
 
 /// Get a specific configuration value

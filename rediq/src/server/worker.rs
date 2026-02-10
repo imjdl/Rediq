@@ -160,6 +160,7 @@ impl Worker {
         let redis = self.state.redis.clone();
         let interval = Duration::from_secs(self.state.config.heartbeat_interval);
         let worker_timeout = self.state.config.worker_timeout;
+        let ttl_multiplier = self.state.config.heartbeat_ttl_multiplier;
         let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
@@ -168,7 +169,7 @@ impl Worker {
             while !shutdown.load(Ordering::Relaxed) {
                 ticker.tick().await;
 
-                if let Err(e) = Self::update_heartbeat_for(&id, &redis, worker_timeout).await {
+                if let Err(e) = Self::update_heartbeat_for(&id, &redis, worker_timeout, ttl_multiplier).await {
                     tracing::error!("Heartbeat update failed: {}", e);
                 }
             }
@@ -177,29 +178,34 @@ impl Worker {
 
     /// Update heartbeat for this worker
     async fn update_heartbeat(&self) -> Result<()> {
-        Self::update_heartbeat_for(&self.id, &self.state.redis, self.state.config.worker_timeout).await
+        Self::update_heartbeat_for(
+            &self.id,
+            &self.state.redis,
+            self.state.config.worker_timeout,
+            self.state.config.heartbeat_ttl_multiplier,
+        ).await
     }
 
     /// Static method to update heartbeat for any worker
     ///
     /// # Important
     ///
-    /// The heartbeat TTL is calculated based on worker_timeout to ensure that
-    /// workers are not incorrectly marked as dead due to network delays or
-    /// temporary processing slowdowns.
-    async fn update_heartbeat_for(worker_id: &str, redis: &RedisClient, worker_timeout: u64) -> Result<()> {
+    /// The heartbeat TTL is calculated based on worker_timeout and ttl_multiplier
+    /// to ensure that workers are not incorrectly marked as dead due to network delays
+    /// or temporary processing slowdowns.
+    async fn update_heartbeat_for(worker_id: &str, redis: &RedisClient, worker_timeout: u64, ttl_multiplier: f64) -> Result<()> {
         let heartbeat_key: RedisKey = Keys::meta_heartbeat(worker_id).into();
         let now = Utc::now().timestamp();
 
         redis.set(heartbeat_key.clone(), now.to_string().into()).await?;
 
-        // Set expiration based on worker_timeout
-        // Use 2x the timeout to provide a safety margin for network issues
+        // Set expiration based on worker_timeout and multiplier
+        // Use multiplier to provide a safety margin for network issues
         // This ensures healthy workers aren't incorrectly marked as dead
-        let ttl = worker_timeout * 2;
+        let ttl = (worker_timeout as f64 * ttl_multiplier) as u64;
         redis.expire(heartbeat_key, ttl).await?;
 
-        tracing::trace!("Heartbeat updated for worker {}, TTL: {}s", worker_id, ttl);
+        tracing::trace!("Heartbeat updated for worker {}, TTL: {}s (multiplier: {})", worker_id, ttl, ttl_multiplier);
 
         Ok(())
     }
@@ -315,15 +321,34 @@ impl Worker {
     }
 
     /// Dequeue task - tries priority queue first, then regular queue
+    ///
+    /// This method attempts to dequeue from the priority queue first without
+    /// checking its size beforehand. This avoids a race condition where another
+    /// worker could take the last task between the check and the dequeue operation.
+    ///
+    /// If the priority queue is empty (returns no task), it falls back to the
+    /// regular queue.
     async fn dequeue_task_any(&self, queue: &str) -> Result<Option<Task>> {
-        // Try priority queue first
-        let pqueue_key: RedisKey = Keys::priority_queue(queue).into();
-        let priority_count = self.state.redis.zcard(pqueue_key.clone()).await?;
-        tracing::debug!("Priority queue {} has {} tasks", queue, priority_count);
-
-        if priority_count > 0 {
-            tracing::debug!("Attempting to dequeue from priority queue {}", queue);
-            return self.dequeue_task_priority(queue).await;
+        // Try priority queue first without pre-checking size
+        // This avoids race condition: zcard > 0 but another worker takes the task
+        tracing::debug!("Attempting to dequeue from priority queue {}", queue);
+        match self.dequeue_task_priority(queue).await {
+            Ok(Some(task)) => {
+                tracing::debug!("Successfully dequeued from priority queue {}", queue);
+                return Ok(Some(task));
+            }
+            Ok(None) => {
+                // Priority queue is empty, fall back to regular queue
+                tracing::debug!("Priority queue {} is empty, trying regular queue", queue);
+            }
+            Err(Error::QueuePaused(_)) => {
+                // Queue is paused, propagate the error
+                return Err(Error::QueuePaused(queue.to_string()));
+            }
+            Err(e) => {
+                // Log other errors but continue to regular queue
+                tracing::warn!("Priority queue dequeue failed: {}, trying regular queue", e);
+            }
         }
 
         // Fall back to regular queue
@@ -333,7 +358,8 @@ impl Worker {
     /// Load task data from Redis
     async fn load_task(&self, task_id: &str) -> Result<Task> {
         let task_key: RedisKey = Keys::task(task_id).into();
-        let data = self.state.redis.get(task_key).await?
+        // Get task data from hash field (stored as 'data' field)
+        let data = self.state.redis.hget(task_key.clone(), "data".into()).await?
             .ok_or_else(|| Error::TaskNotFound(task_id.to_string()))?;
 
         let bytes = data.as_bytes()
@@ -345,6 +371,15 @@ impl Worker {
         // Update status to active
         task.status = TaskStatus::Active;
         task.processed_at = Some(Utc::now().timestamp());
+
+        // Update task status in Redis
+        let current_timestamp = Utc::now().timestamp();
+        self.state.redis.hset(
+            task_key.clone(),
+            vec![
+                ("status".into(), current_timestamp.to_string().into()),
+            ],
+        ).await?;
 
         Ok(task)
     }
@@ -428,7 +463,7 @@ impl Worker {
         // Remove from active queue
         self.state.redis.lrem(active_key, task.id.as_str().into(), 1).await?;
 
-        // Update task in Redis
+        // Update task in Redis (store in hash fields)
         let mut task_data = task.clone();
         task_data.status = status;
         task_data.last_error = error.map(|e| e.to_string());
@@ -436,7 +471,18 @@ impl Worker {
         let data = rmp_serde::to_vec(&task_data)
             .map_err(|e| Error::Serialization(e.to_string()))?;
 
-        self.state.redis.set(task_key, RedisValue::Bytes(data.into())).await?;
+        // Store as separate hash fields
+        self.state.redis.hset(
+            task_key.clone(),
+            vec![
+                ("data".into(), RedisValue::Bytes(data.into())),
+                ("queue".into(), task.queue.as_str().into()),
+            ],
+        ).await?;
+
+        // Update TTL
+        let task_ttl = crate::config::get_task_ttl() as u64;
+        self.state.redis.expire(task_key, task_ttl).await?;
 
         // Update worker processed_total on successful completion
         if status == TaskStatus::Processed {
