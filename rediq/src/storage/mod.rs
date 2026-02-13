@@ -7,4 +7,4 @@ pub mod redis;
 pub mod dependencies;
 
 pub use keys::Keys;
-pub use redis::{RedisClient, RedisConfig, RedisMode};
+pub use redis::{PoolConfig, RedisClient, RedisConfig, RedisMode};

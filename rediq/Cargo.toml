@@ -41,6 +41,9 @@ chrono = { workspace = true }
 cron = { workspace = true }
 once_cell = "1.19"
 
+# Macros
+rediq-macros = { path = "../rediq-macros", optional = true }
+
 # Observability
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -51,6 +54,7 @@ warp = { version = "0.3", optional = true }
 [features]
 default = []
 metrics-http = ["warp"]
+macros = ["rediq-macros"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -107,3 +111,8 @@ path = "../examples/benchmark.rs"
 [[example]]
 name = "progress_example"
 path = "../examples/progress_example.rs"
+
+[[example]]
+name = "macro_example"
+path = "../examples/macro_example.rs"
+required-features = ["macros"]

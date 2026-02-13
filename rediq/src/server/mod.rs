@@ -5,10 +5,12 @@
 pub mod config;
 pub mod worker;
 pub mod scheduler;
+pub mod janitor;
 
 pub use config::{ServerBuilder, ServerConfig, ServerState};
 pub use worker::{Worker, WorkerMetadata};
 pub use scheduler::Scheduler;
+pub use janitor::{Janitor, JanitorConfig};
 
 use crate::{Error, Result};
 use crate::processor::Mux;
@@ -214,6 +216,27 @@ impl Server {
             // Track scheduler for graceful shutdown
             // Note: We don't add scheduler to join_set as it manages its own lifecycle
             tracing::info!("Scheduler started");
+        }
+
+        // Start janitor if configured
+        if let Some(janitor_config) = &self.state.config.janitor_config {
+            let janitor = Janitor::new(self.state.redis.clone(), janitor_config.clone());
+            let janitor_shutdown = janitor.shutdown_handle();
+            let _shutdown = self.shutdown.clone();
+
+            tokio::spawn(async move {
+                janitor.run().await;
+                // Signal shutdown if janitor exits unexpectedly
+                _shutdown.store(true, Ordering::SeqCst);
+            });
+
+            // Store janitor handle for graceful shutdown
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                janitor_shutdown.store(true, Ordering::SeqCst);
+            });
+
+            tracing::info!("Janitor started (interval: {:?})", janitor_config.interval);
         }
 
         // Create and start workers

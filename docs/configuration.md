@@ -163,6 +163,27 @@ let client = Client::builder()
 |--------|------|---------|-------------|
 | `redis_url` | `String` | `redis://localhost:6379` | Redis connection URL |
 | `redis_mode` | `RedisMode` | `Standalone` | Connection mode |
+| `pool_size` | `usize` | `10` | Connection pool size |
+| `min_idle` | `Option<usize>` | `None` | Minimum idle connections |
+| `connection_timeout` | `Option<u64>` | `None` | Connection timeout (seconds) |
+| `idle_timeout` | `Option<u64>` | `None` | Idle timeout (seconds) |
+| `max_lifetime` | `Option<u64>` | `None` | Maximum connection lifetime (seconds) |
+
+### Connection Pool Configuration
+
+```rust
+use std::time::Duration;
+
+let client = Client::builder()
+    .redis_url("redis://localhost:6379")
+    .pool_size(20)                              // Maximum pool size
+    .min_idle(5)                                // Minimum idle connections
+    .connection_timeout(Duration::from_secs(30)) // Connection timeout
+    .idle_timeout(Duration::from_secs(600))      // Idle timeout (10 minutes)
+    .max_lifetime(Duration::from_secs(1800))     // Max lifetime (30 minutes)
+    .build()
+    .await?;
+```
 
 ---
 
@@ -187,6 +208,11 @@ let state = ServerBuilder::new()
 |--------|------|---------|-------------|
 | `redis_url` | `String` | `redis://localhost:6379` | Redis connection URL |
 | `redis_mode` | `RedisMode` | `Standalone` | Connection mode |
+| `pool_size` | `usize` | `10` | Connection pool size |
+| `min_idle` | `Option<usize>` | `None` | Minimum idle connections |
+| `connection_timeout` | `Option<u64>` | `None` | Connection timeout (seconds) |
+| `idle_timeout` | `Option<u64>` | `None` | Idle timeout (seconds) |
+| `max_lifetime` | `Option<u64>` | `None` | Maximum connection lifetime (seconds) |
 | `queues` | `Vec<String>` | `["default"]` | Queues to consume from |
 | `concurrency` | `usize` | `10` | Number of concurrent workers |
 | `heartbeat_interval` | `u64` | `5` | Worker heartbeat interval (seconds) |
@@ -195,6 +221,8 @@ let state = ServerBuilder::new()
 | `poll_interval` | `u64` | `100` | Queue poll interval (milliseconds) |
 | `server_name` | `String` | Auto-generated | Server identifier |
 | `enable_scheduler` | `bool` | `true` | Enable built-in scheduler |
+| `aggregator_config` | `Option<AggregatorConfig>` | `None` | Task aggregation configuration |
+| `janitor_config` | `Option<JanitorConfig>` | `None` | Janitor cleanup configuration |
 
 ### Concurrency Guidelines
 
@@ -246,6 +274,74 @@ server.enable_metrics("0.0.0.0:9090".parse()?);
 ```
 
 Access metrics at: `http://localhost:9090/metrics`
+
+### Task Aggregation Configuration
+
+Task aggregation allows grouping tasks for batch processing. This is useful for scenarios like:
+- Batch email notifications
+- Bulk data processing
+- Aggregated reporting
+
+```rust
+use rediq::server::ServerBuilder;
+use rediq::aggregator::AggregatorConfig;
+use std::time::Duration;
+
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .aggregator_config(AggregatorConfig::new()
+        .max_size(20)                          // Max tasks per group
+        .grace_period(Duration::from_secs(60)) // Wait time for partial groups
+        .max_delay(Duration::from_secs(300)))  // Max delay from first task
+    .build()
+    .await?;
+```
+
+#### Aggregation Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `max_size` | `usize` | `10` | Maximum tasks before aggregation triggers |
+| `grace_period` | `Duration` | `30s` | Wait time for partial groups |
+| `max_delay` | `Duration` | `300s` | Maximum delay from first task |
+
+#### Using Task Groups
+
+```rust
+// Create tasks with group assignment
+let task = Task::builder("notification:send")
+    .payload(&user_data)?
+    .group("daily_notifications")  // Assign to group
+    .build()?;
+
+client.enqueue(task).await?;
+```
+
+### Janitor Configuration
+
+The Janitor automatically cleans up expired task details to prevent Redis memory leaks.
+
+```rust
+use rediq::server::{ServerBuilder, JanitorConfig};
+use std::time::Duration;
+
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .janitor_config(JanitorConfig::new()
+        .interval(Duration::from_secs(60))   // Run every 60 seconds
+        .batch_size(100)                     // Delete up to 100 keys per run
+        .ttl_threshold(60))                  // Delete keys with TTL < 60s
+    .build()
+    .await?;
+```
+
+#### Janitor Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `interval` | `Duration` | `60s` | Time between cleanup runs |
+| `batch_size` | `usize` | `100` | Maximum keys to delete per run |
+| `ttl_threshold` | `i64` | `60` | TTL threshold in seconds |
 
 ---
 

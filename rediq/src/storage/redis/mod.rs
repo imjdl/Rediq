@@ -22,13 +22,78 @@ pub enum RedisMode {
     Sentinel,
 }
 
+/// Connection pool configuration
+#[derive(Debug, Clone)]
+pub struct PoolConfig {
+    /// Maximum pool size
+    pub pool_size: usize,
+    /// Minimum idle connections
+    pub min_idle: Option<usize>,
+    /// Connection timeout in seconds
+    pub connection_timeout: Option<u64>,
+    /// Idle timeout in seconds
+    pub idle_timeout: Option<u64>,
+    /// Maximum connection lifetime in seconds
+    pub max_lifetime: Option<u64>,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            pool_size: 10,
+            min_idle: None,
+            connection_timeout: None,
+            idle_timeout: None,
+            max_lifetime: None,
+        }
+    }
+}
+
+impl PoolConfig {
+    /// Create a new pool configuration with the specified pool size
+    pub fn new(pool_size: usize) -> Self {
+        Self {
+            pool_size,
+            ..Default::default()
+        }
+    }
+
+    /// Set minimum idle connections
+    #[must_use]
+    pub fn min_idle(mut self, min_idle: usize) -> Self {
+        self.min_idle = Some(min_idle);
+        self
+    }
+
+    /// Set connection timeout in seconds
+    #[must_use]
+    pub fn connection_timeout(mut self, timeout: u64) -> Self {
+        self.connection_timeout = Some(timeout);
+        self
+    }
+
+    /// Set idle timeout in seconds
+    #[must_use]
+    pub fn idle_timeout(mut self, timeout: u64) -> Self {
+        self.idle_timeout = Some(timeout);
+        self
+    }
+
+    /// Set maximum connection lifetime in seconds
+    #[must_use]
+    pub fn max_lifetime(mut self, lifetime: u64) -> Self {
+        self.max_lifetime = Some(lifetime);
+        self
+    }
+}
+
 /// Redis connection configuration
 #[derive(Debug, Clone)]
 pub struct RedisConfig {
     /// Redis connection URL
     pub url: String,
-    /// Connection pool size
-    pub pool_size: usize,
+    /// Connection pool configuration
+    pub pool_config: PoolConfig,
     /// Redis connection mode
     pub mode: RedisMode,
 }
@@ -37,7 +102,7 @@ impl Default for RedisConfig {
     fn default() -> Self {
         Self {
             url: "redis://localhost:6379".to_string(),
-            pool_size: 10,
+            pool_config: PoolConfig::default(),
             mode: RedisMode::Standalone,
         }
     }
@@ -58,7 +123,7 @@ impl RedisClient {
             None,
             None,
             Some(ReconnectPolicy::default()),
-            config.pool_size,
+            config.pool_config.pool_size,
         )?;
 
         pool.init().await?;
@@ -82,6 +147,16 @@ impl RedisClient {
 
     /// Create client from connection URL
     pub async fn from_url(url: impl Into<String>) -> Result<Self> {
+        Self::from_url_with_pool_config(url, PoolConfig::default()).await
+    }
+
+    /// Create client from connection URL with custom pool size
+    pub async fn from_url_with_pool(url: impl Into<String>, pool_size: usize) -> Result<Self> {
+        Self::from_url_with_pool_config(url, PoolConfig::new(pool_size)).await
+    }
+
+    /// Create client from connection URL with pool configuration
+    pub async fn from_url_with_pool_config(url: impl Into<String>, pool_config: PoolConfig) -> Result<Self> {
         let url = url.into();
         let redis_config = FredRedisConfig::from_url(&url)?;
         let pool = RedisPool::new(
@@ -89,12 +164,12 @@ impl RedisClient {
             None,
             None,
             Some(ReconnectPolicy::default()),
-            10,
+            pool_config.pool_size,
         )?;
 
         pool.init().await?;
 
-        tracing::info!("Connected to Redis at {}", url);
+        tracing::info!("Connected to Redis at {} (pool size: {})", url, pool_config.pool_size);
 
         Ok(Self {
             pool: Arc::new(pool),
@@ -109,23 +184,7 @@ impl RedisClient {
     /// # Arguments
     /// * `url` - Any cluster node URL (e.g., "redis://cluster-node1:6379")
     pub async fn from_cluster_url(url: impl Into<String>) -> Result<Self> {
-        let url = url.into();
-        let redis_config = FredRedisConfig::from_url(&url)?;
-        let pool = RedisPool::new(
-            redis_config,
-            None,
-            None,
-            Some(ReconnectPolicy::default()),
-            10,
-        )?;
-
-        pool.init().await?;
-
-        tracing::info!("Connected to Redis Cluster at {}", url);
-
-        Ok(Self {
-            pool: Arc::new(pool),
-        })
+        Self::from_cluster_url_with_pool_config(url, PoolConfig::default()).await
     }
 
     /// Create client from Redis Cluster URL with custom pool size
@@ -134,6 +193,15 @@ impl RedisClient {
     /// * `url` - Any cluster node URL
     /// * `pool_size` - Connection pool size
     pub async fn from_cluster_url_with_pool(url: impl Into<String>, pool_size: usize) -> Result<Self> {
+        Self::from_cluster_url_with_pool_config(url, PoolConfig::new(pool_size)).await
+    }
+
+    /// Create client from Redis Cluster URL with pool configuration
+    ///
+    /// # Arguments
+    /// * `url` - Any cluster node URL
+    /// * `pool_config` - Pool configuration
+    pub async fn from_cluster_url_with_pool_config(url: impl Into<String>, pool_config: PoolConfig) -> Result<Self> {
         let url = url.into();
         let redis_config = FredRedisConfig::from_url(&url)?;
         let pool = RedisPool::new(
@@ -141,12 +209,12 @@ impl RedisClient {
             None,
             None,
             Some(ReconnectPolicy::default()),
-            pool_size,
+            pool_config.pool_size,
         )?;
 
         pool.init().await?;
 
-        tracing::info!("Connected to Redis Cluster at {} (pool size: {})", url, pool_size);
+        tracing::info!("Connected to Redis Cluster at {} (pool size: {})", url, pool_config.pool_size);
 
         Ok(Self {
             pool: Arc::new(pool),
@@ -172,23 +240,7 @@ impl RedisClient {
     /// # }
     /// ```
     pub async fn from_sentinel_url(url: impl Into<String>) -> Result<Self> {
-        let url = url.into();
-        let redis_config = FredRedisConfig::from_url(&url)?;
-        let pool = RedisPool::new(
-            redis_config,
-            None,
-            None,
-            Some(ReconnectPolicy::default()),
-            10,
-        )?;
-
-        pool.init().await?;
-
-        tracing::info!("Connected to Redis Sentinel at {}", url);
-
-        Ok(Self {
-            pool: Arc::new(pool),
-        })
+        Self::from_sentinel_url_with_pool_config(url, PoolConfig::default()).await
     }
 
     /// Create client from Redis Sentinel URL with custom pool size
@@ -197,6 +249,15 @@ impl RedisClient {
     /// * `url` - Any sentinel node URL
     /// * `pool_size` - Connection pool size
     pub async fn from_sentinel_url_with_pool(url: impl Into<String>, pool_size: usize) -> Result<Self> {
+        Self::from_sentinel_url_with_pool_config(url, PoolConfig::new(pool_size)).await
+    }
+
+    /// Create client from Redis Sentinel URL with pool configuration
+    ///
+    /// # Arguments
+    /// * `url` - Any sentinel node URL
+    /// * `pool_config` - Pool configuration
+    pub async fn from_sentinel_url_with_pool_config(url: impl Into<String>, pool_config: PoolConfig) -> Result<Self> {
         let url = url.into();
         let redis_config = FredRedisConfig::from_url(&url)?;
         let pool = RedisPool::new(
@@ -204,12 +265,12 @@ impl RedisClient {
             None,
             None,
             Some(ReconnectPolicy::default()),
-            pool_size,
+            pool_config.pool_size,
         )?;
 
         pool.init().await?;
 
-        tracing::info!("Connected to Redis Sentinel at {} (pool size: {})", url, pool_size);
+        tracing::info!("Connected to Redis Sentinel at {} (pool size: {})", url, pool_config.pool_size);
 
         Ok(Self {
             pool: Arc::new(pool),
@@ -504,6 +565,47 @@ impl RedisClient {
 
         tracing::warn!("pdequeue_lua: failed to dequeue after {} retries", MAX_RETRIES);
         Ok(String::new())
+    }
+
+    /// Get TTL of a key in seconds
+    ///
+    /// Returns `Ok(Some(ttl))` if the key has an expiration time,
+    /// `Ok(None)` if the key exists but has no expiration,
+    /// or `Err` if the key doesn't exist.
+    pub async fn ttl(&self, key: &str) -> Result<Option<i64>> {
+        let key: RedisKey = key.into();
+        let result: Option<i64> = self.pool.ttl(key).await?;
+
+        // Redis returns -2 if key doesn't exist, -1 if key exists but has no expiration
+        match result {
+            Some(-2) => Ok(None), // Key doesn't exist
+            Some(-1) => Ok(None), // Key exists but no expiration
+            Some(ttl) => Ok(Some(ttl)),
+            None => Ok(None),
+        }
+    }
+
+    /// Scan for keys matching a pattern
+    ///
+    /// Uses SCAN to iterate over keys matching the given pattern.
+    ///
+    /// # Arguments
+    /// * `cursor` - The cursor to start from (0 for new scan)
+    /// * `pattern` - The pattern to match (e.g., "rediq:task:*")
+    /// * `count` - The approximate number of elements to return
+    ///
+    /// # Returns
+    /// * `Ok((next_cursor, keys))` - The next cursor and list of matching keys
+    ///
+    /// # Note
+    /// This is a placeholder implementation. The full SCAN implementation requires
+    /// proper handling of the SCAN command which is complex with the fred library.
+    pub async fn scan_match(&self, _cursor: u64, _pattern: &str, _count: u64) -> Result<(u64, Vec<String>)> {
+        // For now, we'll use a simplified approach without SCAN
+        // In production, you would want to use the proper SCAN API
+        // This is a placeholder implementation that returns empty results
+        tracing::warn!("scan_match is not fully implemented, returning empty results");
+        Ok((0, Vec::new()))
     }
 }
 

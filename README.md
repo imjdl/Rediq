@@ -36,6 +36,10 @@ Rediq simplifies background job processing in Rust applications. Whether you nee
 | **Middleware System** | Built-in middleware for logging, metrics, and custom hooks |
 | **Prometheus Metrics** | Built-in observability with optional HTTP endpoint (`/metrics`) |
 | **Redis HA** | Support for Redis Cluster and Sentinel for high availability |
+| **Attribute Macros** | Simplified handler registration with `#[task_handler]` macro |
+| **Task Aggregation** | Group tasks for batch processing scenarios |
+| **Janitor Cleanup** | Automatic cleanup of expired task details |
+| **Connection Pool** | Fine-grained connection pool configuration |
 
 ## Quick Start
 
@@ -138,6 +142,7 @@ server.run(mux).await?;
 | `cron` | `String` | `None` | Cron expression for periodic tasks |
 | `unique_key` | `String` | `None` | Unique key for deduplication |
 | `depends_on` | `Vec<String>` | `None` | Task dependency IDs |
+| `group` | `String` | `None` | Group name for task aggregation |
 
 ## Advanced Usage
 
@@ -266,6 +271,96 @@ let client = Client::builder()
     .await?;
 ```
 
+### Attribute Macros (v0.2.0)
+
+Simplify handler registration with the `#[task_handler]` macro. Enable with `features = ["macros"]`:
+
+```toml
+[dependencies]
+rediq = { version = "0.2", features = ["macros"] }
+```
+
+```rust
+use rediq::{Task, Result};
+use rediq_macros::{task_handler, register_handlers};
+
+// Define handlers with the macro
+#[task_handler]
+async fn send_email(task: &Task) -> Result<()> {
+    let payload: EmailData = task.payload_json()?;
+    // Process email...
+    Ok(())
+}
+
+#[task_handler]
+async fn send_sms(task: &Task) -> Result<()> {
+    let payload: SmsData = task.payload_msgpack()?;
+    // Process SMS...
+    Ok(())
+}
+
+// Register all handlers at once
+let mux = register_handlers!(
+    "email:send" => send_email,
+    "sms:send" => send_sms,
+);
+```
+
+### Task Aggregation (v0.2.0)
+
+Group tasks for batch processing:
+
+```rust
+use rediq::aggregator::AggregatorConfig;
+
+// Configure aggregation
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .aggregator_config(AggregatorConfig::new()
+        .max_size(20)                          // Max tasks per group
+        .grace_period(Duration::from_secs(60))) // Wait time
+    .build()
+    .await?;
+
+// Create tasks with group assignment
+let task = Task::builder("notification:send")
+    .payload(&user_data)?
+    .group("daily_notifications")
+    .build()?;
+```
+
+### Connection Pool Configuration (v0.2.0)
+
+Fine-grained connection pool settings:
+
+```rust
+let client = Client::builder()
+    .redis_url("redis://localhost:6379")
+    .pool_size(20)
+    .min_idle(5)
+    .connection_timeout(Duration::from_secs(30))
+    .idle_timeout(Duration::from_secs(600))
+    .max_lifetime(Duration::from_secs(1800))
+    .build()
+    .await?;
+```
+
+### Janitor Cleanup (v0.2.0)
+
+Automatic cleanup of expired task details:
+
+```rust
+use rediq::server::JanitorConfig;
+
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .janitor_config(JanitorConfig::new()
+        .interval(Duration::from_secs(60))
+        .batch_size(100))
+    .build()
+    .await?;
+```
+
 ## CLI Tool
 
 Rediq includes a CLI tool for queue management:
@@ -322,6 +417,9 @@ See [CLI Reference](docs/cli.md) for complete documentation.
 # Basic usage
 cargo run --example quickstart
 
+# Attribute macros (requires --features macros)
+cargo run --example macro_example --features macros
+
 # Priority queues
 cargo run --example priority_queue_example
 
@@ -367,6 +465,10 @@ Rediq is actively developed and production-ready. Current status:
 - ✅ Prometheus metrics
 - ✅ Redis Cluster/Sentinel support
 - ✅ CLI tool with dashboard
+- ✅ Attribute macros for simplified handler registration
+- ✅ Task aggregation for batch processing
+- ✅ Janitor for automatic cleanup
+- ✅ Fine-grained connection pool configuration
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 

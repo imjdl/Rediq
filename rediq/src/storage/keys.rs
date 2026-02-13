@@ -120,6 +120,20 @@ impl Keys {
     pub fn progress(task_id: &str) -> String {
         format!("{}:progress:{}", PREFIX, task_id)
     }
+
+    /// Task group Key (ZSet)
+    /// Stores tasks waiting to be aggregated, score = enqueue timestamp
+    /// Example: rediq:group:daily_notifications
+    pub fn group(group_name: &str) -> String {
+        format!("{}:group:{}", PREFIX, group_name)
+    }
+
+    /// Group metadata Key (Hash)
+    /// Stores group metadata (count, first_task_time, etc.)
+    /// Example: rediq:meta:group:daily_notifications
+    pub fn meta_group(group_name: &str) -> String {
+        format!("{}:meta:group:{}", PREFIX, group_name)
+    }
 }
 
 #[cfg(test)]
@@ -146,5 +160,7 @@ mod tests {
         assert_eq!(Keys::pending_deps("task-123"), "rediq:pending_deps:task-123");
         assert_eq!(Keys::task_deps("task-456"), "rediq:task_deps:task-456");
         assert_eq!(Keys::progress("abc123"), "rediq:progress:abc123");
+        assert_eq!(Keys::group("daily"), "rediq:group:daily");
+        assert_eq!(Keys::meta_group("daily"), "rediq:meta:group:daily");
     }
 }

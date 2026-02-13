@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-02-11
+
+### Added
+- **Attribute Macros Support** - Simplified Handler registration with `#[task_handler]` macro
+  - New `rediq-macros` crate with proc macros
+  - `#[task_handler]` attribute macro for automatic Handler trait implementation
+  - `register_handlers!` macro for batch handler registration
+  - `handler_fn!` and `def_handler!` convenience macros
+  - Enable with `features = ["macros"]`
+- **Task Aggregation** - Support for batch processing scenarios
+  - `Aggregator` trait for custom aggregation logic
+  - `GroupAggregatorFunc` for function-based aggregation
+  - `AggregatorManager` for managing aggregators
+  - `TaskBuilder::group()` method for setting task group
+  - New Redis keys: `group:{name}` and `meta:group:{name}`
+  - `AggregatorConfig` for controlling aggregation behavior
+- **Janitor Cleanup Mechanism** - Automatic cleanup of expired task details
+  - `Janitor` and `JanitorConfig` for managing cleanup
+  - Configurable cleanup interval, batch size, and TTL threshold
+  - Prevents Redis memory leaks from stale task data
+- **Connection Pool Configuration** - Fixed pool_size not being applied
+  - New `PoolConfig` struct with comprehensive pool settings
+  - `pool_size`, `min_idle`, `connection_timeout`, `idle_timeout`, `max_lifetime`
+  - Works for both Client and Server
+- **Payload Convenience Methods** - Easy payload deserialization
+  - `Task::payload_json()` for JSON deserialization
+  - `Task::payload_msgpack()` for MessagePack deserialization
+- **New Example** - `macro_example.rs` demonstrating attribute macro usage
+
+### Changed
+- `ClientBuilder::pool_size()` now correctly applies the pool size setting
+- `ServerConfig` now includes `pool_config`, `aggregator_config`, and `janitor_config` fields
+- `TaskOptions` now includes optional `group` field
+
+### Fixed
+- Fixed `ClientBuilder::build()` ignoring `pool_size` configuration
+
+[0.2.0]: https://github.com/imjdl/rediq/releases/tag/v0.2.0
+
 ## [0.1.3] - 2026-02-08
 
 ### Fixed

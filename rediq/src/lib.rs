@@ -81,6 +81,9 @@ pub mod middleware;
 // Storage layer
 pub mod storage;
 
+// Aggregation
+pub mod aggregator;
+
 // Observability
 pub mod observability;
 
@@ -91,3 +94,7 @@ pub mod progress;
 pub use error::{Error, Result};
 pub use task::Task;
 pub use progress::{TaskProgress, ProgressContext, ProgressConfig};
+
+// Re-export proc macros when the feature is enabled
+#[cfg(feature = "macros")]
+pub use rediq_macros::{def_handler, handler_fn, register_handlers, task_handler};

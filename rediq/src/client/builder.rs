@@ -1,7 +1,7 @@
 //! Client builder and enqueue implementation
 
 use crate::{
-    storage::{Keys, RedisClient, RedisMode},
+    storage::{Keys, PoolConfig, RedisClient, RedisMode},
     config, Error, Result,
 };
 use crate::task::Task;
@@ -16,8 +16,8 @@ pub struct ClientConfig {
     pub redis_url: String,
     /// Redis connection mode
     pub redis_mode: RedisMode,
-    /// Connection pool size
-    pub pool_size: usize,
+    /// Connection pool configuration
+    pub pool_config: PoolConfig,
     /// Default queue name
     pub default_queue: String,
 }
@@ -27,7 +27,7 @@ impl Default for ClientConfig {
         Self {
             redis_url: "redis://localhost:6379".to_string(),
             redis_mode: RedisMode::Standalone,
-            pool_size: 10,
+            pool_config: PoolConfig::default(),
             default_queue: "default".to_string(),
         }
     }
@@ -596,7 +596,35 @@ impl ClientBuilder {
     /// Set connection pool size
     #[must_use]
     pub fn pool_size(mut self, size: usize) -> Self {
-        self.config.pool_size = size;
+        self.config.pool_config.pool_size = size;
+        self
+    }
+
+    /// Set minimum idle connections
+    #[must_use]
+    pub fn min_idle(mut self, min_idle: usize) -> Self {
+        self.config.pool_config.min_idle = Some(min_idle);
+        self
+    }
+
+    /// Set connection timeout in seconds
+    #[must_use]
+    pub fn connection_timeout(mut self, timeout: u64) -> Self {
+        self.config.pool_config.connection_timeout = Some(timeout);
+        self
+    }
+
+    /// Set idle timeout in seconds
+    #[must_use]
+    pub fn idle_timeout(mut self, timeout: u64) -> Self {
+        self.config.pool_config.idle_timeout = Some(timeout);
+        self
+    }
+
+    /// Set maximum connection lifetime in seconds
+    #[must_use]
+    pub fn max_lifetime(mut self, lifetime: u64) -> Self {
+        self.config.pool_config.max_lifetime = Some(lifetime);
         self
     }
 
@@ -610,9 +638,9 @@ impl ClientBuilder {
     /// Build Client
     pub async fn build(self) -> Result<Client> {
         let redis = match self.config.redis_mode {
-            RedisMode::Standalone => RedisClient::from_url(&self.config.redis_url).await?,
-            RedisMode::Cluster => RedisClient::from_cluster_url(&self.config.redis_url).await?,
-            RedisMode::Sentinel => RedisClient::from_sentinel_url(&self.config.redis_url).await?,
+            RedisMode::Standalone => RedisClient::from_url_with_pool_config(&self.config.redis_url, self.config.pool_config).await?,
+            RedisMode::Cluster => RedisClient::from_cluster_url_with_pool_config(&self.config.redis_url, self.config.pool_config).await?,
+            RedisMode::Sentinel => RedisClient::from_sentinel_url_with_pool_config(&self.config.redis_url, self.config.pool_config).await?,
         };
         Ok(Client {
             redis,
@@ -629,10 +657,18 @@ mod tests {
         let builder = Client::builder()
             .redis_url("redis://localhost:6380")
             .pool_size(20)
+            .min_idle(5)
+            .connection_timeout(30)
+            .idle_timeout(600)
+            .max_lifetime(1800)
             .default_queue("custom");
 
         assert_eq!(builder.config.redis_url, "redis://localhost:6380");
-        assert_eq!(builder.config.pool_size, 20);
+        assert_eq!(builder.config.pool_config.pool_size, 20);
+        assert_eq!(builder.config.pool_config.min_idle, Some(5));
+        assert_eq!(builder.config.pool_config.connection_timeout, Some(30));
+        assert_eq!(builder.config.pool_config.idle_timeout, Some(600));
+        assert_eq!(builder.config.pool_config.max_lifetime, Some(1800));
         assert_eq!(builder.config.default_queue, "custom");
     }
 
@@ -640,7 +676,22 @@ mod tests {
     fn test_client_config_default() {
         let config = ClientConfig::default();
         assert_eq!(config.redis_url, "redis://localhost:6379");
-        assert_eq!(config.pool_size, 10);
+        assert_eq!(config.pool_config.pool_size, 10);
         assert_eq!(config.default_queue, "default");
+    }
+
+    #[test]
+    fn test_pool_config() {
+        let pool_config = PoolConfig::new(20)
+            .min_idle(5)
+            .connection_timeout(30)
+            .idle_timeout(600)
+            .max_lifetime(1800);
+
+        assert_eq!(pool_config.pool_size, 20);
+        assert_eq!(pool_config.min_idle, Some(5));
+        assert_eq!(pool_config.connection_timeout, Some(30));
+        assert_eq!(pool_config.idle_timeout, Some(600));
+        assert_eq!(pool_config.max_lifetime, Some(1800));
     }
 }

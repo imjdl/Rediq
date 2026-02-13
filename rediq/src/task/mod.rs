@@ -63,6 +63,9 @@ pub struct TaskOptions {
     pub priority: i32,
     /// Task dependencies - list of task IDs that must complete before this task runs
     pub depends_on: Option<Vec<String>>,
+    /// Group name for task aggregation
+    /// Tasks with the same group name will be aggregated together
+    pub group: Option<String>,
 }
 
 impl Default for TaskOptions {
@@ -75,6 +78,7 @@ impl Default for TaskOptions {
             unique_key: None,
             priority: 50,
             depends_on: None,
+            group: None,
         }
     }
 }
@@ -186,6 +190,60 @@ impl Task {
         // Exponential backoff: 2^retry_cnt seconds, max 60 seconds
         let delay_secs = 2u64.pow(self.retry_cnt.saturating_add(1).min(6));
         Some(Duration::from_secs(delay_secs))
+    }
+
+    /// Deserialize payload as JSON
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::Task;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct EmailData {
+    ///     to: String,
+    ///     subject: String,
+    /// }
+    ///
+    /// # fn example(task: &Task) -> rediq::Result<()> {
+    /// let data: EmailData = task.payload_json()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn payload_json<'a, T>(&'a self) -> Result<T>
+    where
+        T: Deserialize<'a>,
+    {
+        serde_json::from_slice(&self.payload)
+            .map_err(|e| Error::Serialization(format!("Failed to deserialize JSON: {}", e)))
+    }
+
+    /// Deserialize payload as MessagePack
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::Task;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct EmailData {
+    ///     to: String,
+    ///     subject: String,
+    /// }
+    ///
+    /// # fn example(task: &Task) -> rediq::Result<()> {
+    /// let data: EmailData = task.payload_msgpack()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn payload_msgpack<'a, T>(&'a self) -> Result<T>
+    where
+        T: Deserialize<'a>,
+    {
+        rmp_serde::from_slice(&self.payload)
+            .map_err(|e| Error::Serialization(format!("Failed to deserialize MessagePack: {}", e)))
     }
 }
 

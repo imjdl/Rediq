@@ -23,6 +23,7 @@ thread_local! {
 ///
 /// ```rust,no_run
 /// use rediq::task::TaskProgressExt;
+/// use rediq::Task;
 ///
 /// async fn process_task(task: &Task) {
 ///     let _guard = task.progress_guard().unwrap();

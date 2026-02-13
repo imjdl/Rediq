@@ -1,5 +1,5 @@
 [workspace]
-members = ["rediq", "rediq-cli"]
+members = ["rediq", "rediq-cli", "rediq-macros"]
 resolver = "2"
 
 [workspace.package]

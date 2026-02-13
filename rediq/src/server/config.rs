@@ -3,8 +3,10 @@
 //! Provides configuration structures for the Rediq server.
 
 use crate::{Error, Result};
-use crate::storage::{RedisClient, RedisMode};
+use crate::storage::{PoolConfig, RedisClient, RedisMode};
 use crate::middleware::MiddlewareChain;
+use crate::aggregator::AggregatorConfig;
+use crate::server::JanitorConfig;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,6 +18,9 @@ pub struct ServerConfig {
 
     /// Redis connection mode
     pub redis_mode: RedisMode,
+
+    /// Connection pool configuration
+    pub pool_config: PoolConfig,
 
     /// Queues to consume from
     pub queues: Vec<String>,
@@ -45,6 +50,12 @@ pub struct ServerConfig {
 
     /// Enable scheduler for delayed/retry tasks
     pub enable_scheduler: bool,
+
+    /// Aggregator configuration for task grouping
+    pub aggregator_config: Option<AggregatorConfig>,
+
+    /// Janitor configuration for task cleanup
+    pub janitor_config: Option<JanitorConfig>,
 }
 
 impl Default for ServerConfig {
@@ -52,6 +63,7 @@ impl Default for ServerConfig {
         Self {
             redis_url: "redis://localhost:6379".to_string(),
             redis_mode: RedisMode::Standalone,
+            pool_config: PoolConfig::default(),
             queues: vec!["default".to_string()],
             concurrency: 10,
             heartbeat_interval: 5,
@@ -61,6 +73,8 @@ impl Default for ServerConfig {
             poll_interval: 100,
             server_name: format!("rediq-server-{}", Uuid::new_v4()),
             enable_scheduler: true,
+            aggregator_config: None,
+            janitor_config: None,
         }
     }
 }
@@ -267,6 +281,88 @@ impl ServerBuilder {
         self
     }
 
+    /// Set connection pool size
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rediq::server::ServerBuilder;
+    /// let builder = ServerBuilder::new()
+    ///     .pool_size(20);
+    /// ```
+    #[must_use]
+    pub fn pool_size(mut self, size: usize) -> Self {
+        self.config.pool_config.pool_size = size;
+        self
+    }
+
+    /// Set minimum idle connections
+    #[must_use]
+    pub fn min_idle(mut self, min_idle: usize) -> Self {
+        self.config.pool_config.min_idle = Some(min_idle);
+        self
+    }
+
+    /// Set connection timeout in seconds
+    #[must_use]
+    pub fn connection_timeout(mut self, timeout: u64) -> Self {
+        self.config.pool_config.connection_timeout = Some(timeout);
+        self
+    }
+
+    /// Set idle timeout in seconds
+    #[must_use]
+    pub fn idle_timeout(mut self, timeout: u64) -> Self {
+        self.config.pool_config.idle_timeout = Some(timeout);
+        self
+    }
+
+    /// Set maximum connection lifetime in seconds
+    #[must_use]
+    pub fn max_lifetime(mut self, lifetime: u64) -> Self {
+        self.config.pool_config.max_lifetime = Some(lifetime);
+        self
+    }
+
+    /// Set aggregator configuration for task grouping
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rediq::server::ServerBuilder;
+    /// # use rediq::aggregator::AggregatorConfig;
+    /// # use std::time::Duration;
+    /// let builder = ServerBuilder::new()
+    ///     .aggregator_config(AggregatorConfig::new()
+    ///         .max_size(20)
+    ///         .grace_period(Duration::from_secs(60))
+    ///         .max_delay(Duration::from_secs(300)));
+    /// ```
+    #[must_use]
+    pub fn aggregator_config(mut self, config: AggregatorConfig) -> Self {
+        self.config.aggregator_config = Some(config);
+        self
+    }
+
+    /// Set janitor configuration for task cleanup
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use rediq::server::ServerBuilder;
+    /// # use rediq::server::JanitorConfig;
+    /// # use std::time::Duration;
+    /// let builder = ServerBuilder::new()
+    ///     .janitor_config(JanitorConfig::new()
+    ///         .interval(Duration::from_secs(60))
+    ///         .batch_size(100));
+    /// ```
+    #[must_use]
+    pub fn janitor_config(mut self, config: JanitorConfig) -> Self {
+        self.config.janitor_config = Some(config);
+        self
+    }
+
     /// Build the server
     ///
     /// This method connects to Redis and initializes the server.
@@ -292,9 +388,9 @@ impl ServerBuilder {
 
         // Connect to Redis
         let redis = match self.config.redis_mode {
-            RedisMode::Standalone => RedisClient::from_url(&self.config.redis_url).await?,
-            RedisMode::Cluster => RedisClient::from_cluster_url(&self.config.redis_url).await?,
-            RedisMode::Sentinel => RedisClient::from_sentinel_url(&self.config.redis_url).await?,
+            RedisMode::Standalone => RedisClient::from_url_with_pool_config(&self.config.redis_url, self.config.pool_config.clone()).await?,
+            RedisMode::Cluster => RedisClient::from_cluster_url_with_pool_config(&self.config.redis_url, self.config.pool_config.clone()).await?,
+            RedisMode::Sentinel => RedisClient::from_sentinel_url_with_pool_config(&self.config.redis_url, self.config.pool_config.clone()).await?,
         };
 
         // Ping to verify connection

@@ -152,6 +152,44 @@ impl TaskBuilder {
         self
     }
 
+    /// Set group name for task aggregation
+    ///
+    /// Tasks with the same group name will be aggregated together before processing.
+    /// The aggregation is triggered by one of the following conditions:
+    /// - The group reaches its maximum size
+    /// - The grace period expires
+    /// - The maximum delay from the first task is exceeded
+    ///
+    /// # Arguments
+    /// * `group` - The group name for aggregation
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rediq::Task;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct UserData {
+    ///     user_id: String,
+    /// }
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let user_data = UserData { user_id: "123".to_string() };
+    /// let task = Task::builder("notification:send")
+    ///     .queue("default")
+    ///     .payload(&user_data)?
+    ///     .group("daily_notifications")
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn group(mut self, group: impl Into<String>) -> Self {
+        self.options.group = Some(group.into());
+        self
+    }
+
     /// Build the task
     pub fn build(self) -> Result<Task> {
         let now = Utc::now().timestamp();
@@ -318,5 +356,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(task.options.depends_on, Some(vec!["task-1".to_string(), "task-2".to_string(), "task-3".to_string()]));
+    }
+
+    #[test]
+    fn test_builder_with_group() {
+        let task = Task::builder("test:task")
+            .payload(&TestPayload {
+                message: "Hello".to_string(),
+            })
+            .unwrap()
+            .group("daily_notifications")
+            .build()
+            .unwrap();
+
+        assert_eq!(task.options.group, Some("daily_notifications".to_string()));
     }
 }
