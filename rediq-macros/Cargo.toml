@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Proc macros for rediq task handlers"
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+]
 
 [lib]
 proc-macro = true
