@@ -32,9 +32,14 @@ Rediq 简化了 Rust 应用中的后台任务处理。无论是发送邮件、�
 | **自动重试** | 可配置的重试机制，支持指数退避（2s、4s、8s...） |
 | **死信队列** | 失败任务自动移动到死信队列 |
 | **任务依赖** | 定义任务执行依赖关系（B 等待 A 完成后执行） |
+| **进度追踪** | 报告任务执行进度（0-100%），支持自定义消息 |
 | **中间件系统** | 内置日志、指标中间件和自定义钩子支持 |
 | **Prometheus 指标** | 内置可观测性，可选 HTTP 端点（`/metrics`） |
 | **Redis 高可用** | 支持 Redis Cluster 和 Sentinel 实现高可用 |
+| **属性宏** | 使用 `#[task_handler]` 宏简化 Handler 注册 |
+| **任务聚合** | 将同组任务聚合，适用于批处理场景 |
+| **Janitor 清理** | 自动清理过期任务详情，防止内存泄漏 |
+| **连接池配置** | 精细化的连接池设置 |
 
 ## 快速开始
 
@@ -42,7 +47,7 @@ Rediq 简化了 Rust 应用中的后台任务处理。无论是发送邮件、�
 
 ```toml
 [dependencies]
-rediq = "0.1"
+rediq = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -137,6 +142,7 @@ server.run(mux).await?;
 | `cron` | `String` | `None` | Cron 表达式，用于周期性任务 |
 | `unique_key` | `String` | `None` | 用于去重的唯一键 |
 | `depends_on` | `Vec<String>` | `None` | 任务依赖 ID |
+| `group` | `String` | `None` | 任务分组名称（用于聚合） |
 
 ## 高级用法
 
@@ -233,6 +239,96 @@ let client = Client::builder()
     .await?;
 ```
 
+### 属性宏 (v0.2.0)
+
+使用 `#[task_handler]` 宏简化 Handler 注册。启用 `features = ["macros"]`：
+
+```toml
+[dependencies]
+rediq = { version = "0.2", features = ["macros"] }
+```
+
+```rust
+use rediq::{Task, Result};
+use rediq_macros::{task_handler, register_handlers};
+
+// 使用宏定义处理器
+#[task_handler]
+async fn send_email(task: &Task) -> Result<()> {
+    let payload: EmailData = task.payload_json()?;
+    // 处理邮件...
+    Ok(())
+}
+
+#[task_handler]
+async fn send_sms(task: &Task) -> Result<()> {
+    let payload: SmsData = task.payload_msgpack()?;
+    // 处理短信...
+    Ok(())
+}
+
+// 一次性注册所有处理器
+let mux = register_handlers!(
+    "email:send" => send_email,
+    "sms:send" => send_sms,
+);
+```
+
+### 任务聚合 (v0.2.0)
+
+将任务分组用于批处理：
+
+```rust
+use rediq::aggregator::AggregatorConfig;
+
+// 配置聚合
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .aggregator_config(AggregatorConfig::new()
+        .max_size(20)                          // 每组最大任务数
+        .grace_period(Duration::from_secs(60))) // 等待时间
+    .build()
+    .await?;
+
+// 创建带分组的任务
+let task = Task::builder("notification:send")
+    .payload(&user_data)?
+    .group("daily_notifications")
+    .build()?;
+```
+
+### 连接池配置 (v0.2.0)
+
+精细化连接池设置：
+
+```rust
+let client = Client::builder()
+    .redis_url("redis://localhost:6379")
+    .pool_size(20)
+    .min_idle(5)
+    .connection_timeout(Duration::from_secs(30))
+    .idle_timeout(Duration::from_secs(600))
+    .max_lifetime(Duration::from_secs(1800))
+    .build()
+    .await?;
+```
+
+### Janitor 清理 (v0.2.0)
+
+自动清理过期任务详情：
+
+```rust
+use rediq::server::JanitorConfig;
+
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .janitor_config(JanitorConfig::new()
+        .interval(Duration::from_secs(60))
+        .batch_size(100))
+    .build()
+    .await?;
+```
+
 ## CLI 工具
 
 Rediq 包含一个队列管理 CLI 工具：
@@ -288,6 +384,9 @@ rediq stats --queue <name>
 # 基本用法
 cargo run --example quickstart
 
+# 属性宏（需要 --features macros）
+cargo run --example macro_example --features macros
+
 # 优先级队列
 cargo run --example priority_queue_example
 
@@ -299,6 +398,9 @@ cargo run --example dependency_example
 
 # 中间件
 cargo run --example middleware_test
+
+# 进度追踪
+cargo run --example progress_example
 
 # HTTP 指标端点
 cargo run --example metrics_http_example
@@ -325,10 +427,15 @@ Rediq 正在积极开发中，已可用于生产环境。当前状态：
 - ✅ 优先级队列
 - ✅ 延迟和周期性任务
 - ✅ 任务依赖
+- ✅ 任务进度追踪
 - ✅ 中间件系统
 - ✅ Prometheus 指标
 - ✅ Redis Cluster/Sentinel 支持
 - ✅ CLI 工具和仪表板
+- ✅ 属性宏简化 Handler 注册
+- ✅ 任务聚合批处理
+- ✅ Janitor 自动清理
+- ✅ 精细化连接池配置
 
 查看 [CHANGELOG.md](CHANGELOG.md) 了解版本历史。
 

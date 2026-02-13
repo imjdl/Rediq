@@ -47,7 +47,7 @@ Rediq simplifies background job processing in Rust applications. Whether you nee
 
 ```toml
 [dependencies]
-rediq = "0.1"
+rediq = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 

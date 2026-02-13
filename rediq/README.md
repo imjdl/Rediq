@@ -4,14 +4,17 @@ A distributed task queue framework for Rust based on Redis, inspired by [Asynq](
 
 ## Features
 
-- **Simple API**: Easy-to-use client and server APIs
-- **Priority Queues**: Support for high-priority tasks
+- **Simple API**: Easy-to-use client and server APIs with builder pattern
+- **Priority Queues**: Support for high-priority tasks (0-100, lower = higher priority)
 - **Task Retries**: Automatic retry with exponential backoff
 - **Scheduled Tasks**: Support for delayed and cron-based tasks
 - **Task Dependencies**: Execute tasks in dependency order
+- **Task Aggregation**: Group tasks for batch processing
+- **Progress Tracking**: Report task execution progress (0-100%)
 - **Middleware System**: Hook into task processing lifecycle
 - **Metrics**: Built-in Prometheus metrics support
-- **Redis Cluster**: Support for standalone, cluster, and sentinel modes
+- **Redis HA**: Support for standalone, cluster, and sentinel modes
+- **Attribute Macros**: Simplified handler registration with `#[task_handler]`
 
 ## Installation
 
@@ -19,7 +22,15 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rediq = "0.1"
+rediq = "0.2"
+tokio = { version = "1", features = ["full"] }
+```
+
+For attribute macros support:
+
+```toml
+[dependencies]
+rediq = { version = "0.2", features = ["macros"] }
 ```
 
 ## Quick Start
@@ -27,34 +38,22 @@ rediq = "0.1"
 ### Producer (Client)
 
 ```rust
-use rediq::client::Client;
-use rediq::task::Task;
-use serde::Serialize;
+use rediq::{Client, Task};
 
-#[derive(Serialize)]
-struct EmailData {
-    to: String,
-    subject: String,
-    body: String,
-}
+let client = Client::builder()
+    .redis_url("redis://localhost:6379")
+    .build()
+    .await?;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::from_url("redis://127.0.0.1")?;
+let task = Task::builder("email:send")
+    .queue("emails")
+    .payload(&serde_json::json!({
+        "to": "user@example.com",
+        "subject": "Welcome!"
+    }))?
+    .build()?;
 
-    let task = Task::builder("email:send")
-        .payload(&EmailData {
-            to: "user@example.com".to_string(),
-            subject: "Welcome".to_string(),
-            body: "Hello!".to_string(),
-        })?
-        .queue("default")
-        .build()?;
-
-    client.enqueue(&task).await?;
-
-    Ok(())
-}
+client.enqueue(task).await?;
 ```
 
 ### Consumer (Worker)
@@ -62,8 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use rediq::server::{Server, ServerBuilder};
 use rediq::processor::{Handler, Mux};
-use rediq::task::Task;
-use rediq::error::Result;
+use rediq::{Task, Result};
 
 struct EmailHandler;
 
@@ -76,21 +74,65 @@ impl Handler for EmailHandler {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut mux = Mux::new();
-    mux.handle("email:send", EmailHandler);
+let state = ServerBuilder::new()
+    .redis_url("redis://localhost:6379")
+    .queues(&["emails"])
+    .concurrency(10)
+    .build()
+    .await?;
 
-    let server = ServerBuilder::new()
-        .concurrency(10)
-        .queues(["default"])
-        .handler(mux)
-        .build()?;
+let server = Server::from(state);
+let mut mux = Mux::new();
+mux.handle("email:send", EmailHandler);
 
-    server.run().await?;
+server.run(mux).await?;
+```
 
+### Attribute Macros (v0.2.0)
+
+Simplify handler registration with `#[task_handler]`:
+
+```rust
+use rediq::{Task, Result};
+use rediq_macros::{task_handler, register_handlers};
+
+#[task_handler]
+async fn send_email(task: &Task) -> Result<()> {
+    let payload: EmailData = task.payload_json()?;
+    // Process email...
     Ok(())
 }
+
+#[task_handler]
+async fn send_sms(task: &Task) -> Result<()> {
+    let payload: SmsData = task.payload_msgpack()?;
+    // Process SMS...
+    Ok(())
+}
+
+let mux = register_handlers!(
+    "email:send" => send_email,
+    "sms:send" => send_sms,
+);
+```
+
+## CLI Tool
+
+```bash
+# Install CLI
+cargo install rediq-cli
+
+# Real-time dashboard
+rediq dash
+
+# Queue operations
+rediq queue list
+rediq queue pause <name>
+rediq queue resume <name>
+
+# Task operations
+rediq task show <id>
+rediq task cancel <id> --queue <name>
 ```
 
 ## Documentation
