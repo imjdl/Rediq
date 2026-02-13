@@ -42,7 +42,7 @@ cron = { workspace = true }
 once_cell = "1.19"
 
 # Macros
-rediq-macros = { path = "../rediq-macros", optional = true }
+rediq-macros = { version = "0.2.0", path = "../rediq-macros", optional = true }
 
 # Observability
 tracing = { workspace = true }
