@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-02-15
+
+### Fixed
+- Fixed all clippy warnings and errors across the codebase
+- Fixed `macro_example` compilation (use `#fn_sig` in macro expansion)
+- Fixed MutexGuard across await point in priority_queue test
+
+### Changed
+- Improved `rediq-macros` documentation (use `rust,ignore` for doc examples)
+- Added type aliases (`QueueCheckFn`, `AggregatorFn`) to reduce type complexity warnings
+- Removed unused `ErrorMiddleware` warning with `#[allow(dead_code)]`
+
+### Added
+- **Integration Tests**: Added 12 new integration tests for previously untested features:
+  - `cron.rs`: Cron task scheduling and registration tests
+  - `janitor.rs`: Janitor cleanup and TTL tests
+  - `aggregator.rs`: Task grouping and aggregation tests
+  - `progress.rs`: Progress tracking and reporting tests
+
+[0.2.3]: https://github.com/imjdl/rediq/releases/tag/v0.2.3
+
 ## [0.2.2] - 2026-02-15
 
 ### Fixed
