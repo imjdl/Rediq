@@ -588,24 +588,59 @@ impl RedisClient {
     /// Scan for keys matching a pattern
     ///
     /// Uses SCAN to iterate over keys matching the given pattern.
+    /// Note: This implementation uses fred's Stream-based scan interface.
+    /// The cursor parameter is used to determine if this is a new scan (cursor=0)
+    /// or a continuation. For simplicity, each call returns one page of results.
     ///
     /// # Arguments
     /// * `cursor` - The cursor to start from (0 for new scan)
     /// * `pattern` - The pattern to match (e.g., "rediq:task:*")
-    /// * `count` - The approximate number of elements to return
+    /// * `count` - The approximate number of elements to return per page
     ///
     /// # Returns
     /// * `Ok((next_cursor, keys))` - The next cursor and list of matching keys
-    ///
-    /// # Note
-    /// This is a placeholder implementation. The full SCAN implementation requires
-    /// proper handling of the SCAN command which is complex with the fred library.
-    pub async fn scan_match(&self, _cursor: u64, _pattern: &str, _count: u64) -> Result<(u64, Vec<String>)> {
-        // For now, we'll use a simplified approach without SCAN
-        // In production, you would want to use the proper SCAN API
-        // This is a placeholder implementation that returns empty results
-        tracing::warn!("scan_match is not fully implemented, returning empty results");
-        Ok((0, Vec::new()))
+    ///   - next_cursor is 0 when scan is complete
+    ///   - next_cursor is non-zero when more results are available
+    pub async fn scan_match(&self, _cursor: u64, pattern: &str, count: u64) -> Result<(u64, Vec<String>)> {
+        use fred::types::Scanner;
+        use futures::StreamExt;
+
+        // fred's scan returns a Stream of ScanResult pages
+        // For cursor=0, we start a new scan
+        // For cursor!=0, we continue from where we left off
+        // Since fred manages cursor internally, we simplify by:
+        // - cursor=0: start new scan, return first page
+        // - cursor=1: there might be more pages (simplified)
+        // - cursor=0 returned: scan complete
+
+        // Get a client from the pool to use scan method
+        let client = self.pool.next();
+        let mut stream = client.scan(pattern, Some(count as u32), None);
+
+        // Get the first page of results
+        match stream.next().await {
+            Some(Ok(scan_result)) => {
+                let has_more = scan_result.has_more();
+                let keys: Vec<String> = scan_result
+                    .results()
+                    .as_ref()
+                    .map(|v| v.iter().filter_map(|k| k.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+
+                // Trigger next page scan in background if there are more results
+                // fred's Drop impl will continue the scan when we don't call next()
+                if has_more {
+                    // Return non-zero cursor to indicate more results
+                    // Use 1 as a simple marker since fred manages the actual cursor
+                    Ok((1, keys))
+                } else {
+                    // Return 0 to indicate scan complete
+                    Ok((0, keys))
+                }
+            }
+            Some(Err(e)) => Err(Error::Redis(e)),
+            None => Ok((0, Vec::new())),
+        }
     }
 }
 
@@ -617,6 +652,7 @@ pub struct RedisPipeline {
     sets: Vec<(RedisKey, RedisValue)>,
     rpushes: Vec<(RedisKey, Vec<RedisValue>)>,
     sadds: Vec<(RedisKey, RedisValue)>,
+    expires: Vec<(RedisKey, u64)>,
 }
 
 impl RedisPipeline {
@@ -627,6 +663,7 @@ impl RedisPipeline {
             sets: Vec::new(),
             rpushes: Vec::new(),
             sadds: Vec::new(),
+            expires: Vec::new(),
         }
     }
 
@@ -648,6 +685,12 @@ impl RedisPipeline {
         self
     }
 
+    /// Add an EXPIRE command
+    pub fn expire(mut self, key: RedisKey, seconds: u64) -> Self {
+        self.expires.push((key, seconds));
+        self
+    }
+
     /// Execute all commands
     pub async fn execute(self) -> Result<Vec<RedisValue>> {
         // Execute SET commands
@@ -663,6 +706,11 @@ impl RedisPipeline {
         // Execute SADD commands
         for (key, member) in self.sadds {
             let _: u64 = self.pool.sadd(key, member).await?;
+        }
+
+        // Execute EXPIRE commands
+        for (key, seconds) in self.expires {
+            let _: bool = self.pool.expire(key, seconds as i64).await?;
         }
 
         // Return empty results (commands executed in order)

@@ -274,6 +274,7 @@ impl Client {
 
         let mut task_ids = Vec::with_capacity(tasks.len());
         let mut registered_queues = std::collections::HashSet::new();
+        let task_ttl = config::get_task_ttl() as u64;
 
         // Create pipeline for batch operations
         let mut pipeline = self.redis.pipeline();
@@ -289,7 +290,10 @@ impl Client {
 
             // Add SET command to pipeline (store task details)
             let task_key: RedisKey = Keys::task(&task_id).into();
-            pipeline = pipeline.set(task_key, RedisValue::Bytes(task_data.into()));
+            pipeline = pipeline.set(task_key.clone(), RedisValue::Bytes(task_data.into()));
+
+            // Add EXPIRE command to set TTL on task key
+            pipeline = pipeline.expire(task_key, task_ttl);
 
             // Add RPUSH command to pipeline (add task_id to queue)
             let queue_key: RedisKey = Keys::queue(&task.queue).into();

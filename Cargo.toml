@@ -3,7 +3,7 @@ members = ["rediq", "rediq-cli", "rediq-macros"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.70"
 authors = ["Rediq Contributors"]
@@ -14,9 +14,10 @@ repository = "https://github.com/imjdl/rediq"
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Redis client
-fred = { version = "9.0", features = ["enable-rustls", "partial-tracing"] }
+fred = { version = "9.0", features = ["enable-rustls", "partial-tracing", "i-keys"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

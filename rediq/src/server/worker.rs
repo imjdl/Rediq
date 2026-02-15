@@ -448,6 +448,10 @@ impl Worker {
                     self.schedule_retry(&task).await?;
                 } else {
                     self.ack_task(&task, TaskStatus::Dead, Some(e)).await?;
+                    // Fail dependent tasks when this task enters dead queue
+                    if let Err(dep_err) = self.fail_dependent_tasks(&task.id, &task.queue).await {
+                        tracing::error!("Failed to propagate failure to dependent tasks: {}", dep_err);
+                    }
                 }
             }
         }
@@ -534,6 +538,22 @@ impl Worker {
     /// this task and enqueues them if all their dependencies are satisfied.
     async fn check_dependent_tasks(&self, completed_task_id: &str) -> Result<()> {
         dependencies::check_dependents(&self.state.redis, completed_task_id).await?;
+        Ok(())
+    }
+
+    /// Fail dependent tasks when a task enters dead queue
+    ///
+    /// Called when a task fails permanently. Finds all tasks that depend on this
+    /// failed task and moves them to the dead queue to prevent dependency deadlocks.
+    async fn fail_dependent_tasks(&self, failed_task_id: &str, queue: &str) -> Result<()> {
+        let count = dependencies::fail_dependents(&self.state.redis, failed_task_id, queue).await?;
+        if count > 0 {
+            tracing::warn!(
+                "Task {} failed, {} dependent tasks moved to dead queue",
+                failed_task_id,
+                count
+            );
+        }
         Ok(())
     }
 

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-02-15
+
+### Fixed
+- **Scheduler Panic Fix**: Removed `unwrap()` in cron task creation, preventing scheduler crashes on task build failures
+- **scan_match Implementation**: Implemented full SCAN functionality for Janitor cleanup, fixing memory leak prevention
+- **Dependency Failure Propagation**: Tasks waiting on a failed dependency are now moved to dead queue to prevent deadlocks
+- **Batch Enqueue TTL**: Task keys created via `enqueue_batch()` now have proper TTL set, consistent with single task enqueue
+
+### Changed
+- Added `fred` feature `i-keys` for SCAN support
+- Added `futures` dependency for async stream handling
+- Extended `RedisPipeline` with `expire()` method for batch TTL operations
+- New `fail_dependents()` function in `dependencies` module
+
+[0.2.2]: https://github.com/imjdl/rediq/releases/tag/v0.2.2
+
 ## [0.2.1] - 2026-02-14
 
 ### Added

@@ -4,7 +4,7 @@
 
 use crate::{Result, Error};
 use crate::storage::{Keys, RedisClient};
-use fred::prelude::RedisKey;
+use fred::prelude::{RedisKey, RedisValue};
 
 /// Register task dependencies in Redis
 ///
@@ -148,6 +148,132 @@ pub async fn check_dependents(redis: &RedisClient, completed_task_id: &str) -> R
     }
 
     Ok(enqueued_count)
+}
+
+/// Fail all dependent tasks when a task enters the dead letter queue
+///
+/// This function is called when a task fails permanently (enters dead queue).
+/// It finds all tasks that depend on this failed task and moves them to the
+/// dead queue as well, preventing dependency deadlocks.
+///
+/// # Arguments
+/// * `redis` - Redis client
+/// * `failed_task_id` - The ID of the task that failed permanently
+/// * `queue` - The queue name for the dependent tasks
+///
+/// # Returns
+/// Number of dependent tasks that were failed
+pub async fn fail_dependents(redis: &RedisClient, failed_task_id: &str, queue: &str) -> Result<usize> {
+    // Get tasks that depend on the failed task
+    let task_deps_key: RedisKey = Keys::task_deps(failed_task_id).into();
+    let dependents = redis.smembers(task_deps_key.clone()).await?;
+
+    if dependents.is_empty() {
+        return Ok(0);
+    }
+
+    tracing::warn!(
+        "Task {} failed permanently, failing {} dependent tasks",
+        failed_task_id,
+        dependents.len()
+    );
+
+    let mut failed_count = 0;
+
+    for dependent_id in &dependents {
+        let dependent_id_str = dependent_id.as_str();
+
+        // Get the task data to update its status
+        let task_key: RedisKey = Keys::task(dependent_id_str).into();
+
+        match redis.hget(task_key.clone(), "data".into()).await? {
+            Some(data) => {
+                if let Some(bytes) = data.as_bytes() {
+                    match rmp_serde::from_slice::<crate::Task>(bytes) {
+                        Ok(mut task) => {
+                            // Update task status and error
+                            task.status = crate::task::TaskStatus::Dead;
+                            task.last_error = Some(format!(
+                                "Dependency task {} failed permanently",
+                                failed_task_id
+                            ));
+
+                            // Serialize updated task
+                            match rmp_serde::to_vec(&task) {
+                                Ok(new_data) => {
+                                    // Update task in Redis
+                                    if let Err(e) = redis
+                                        .hset(
+                                            task_key.clone(),
+                                            vec![
+                                                ("data".into(), RedisValue::Bytes(new_data.into())),
+                                                ("queue".into(), queue.into()),
+                                            ],
+                                        )
+                                        .await
+                                    {
+                                        tracing::error!(
+                                            "Failed to update dependent task {}: {}",
+                                            dependent_id_str,
+                                            e
+                                        );
+                                        continue;
+                                    }
+
+                                    // Add to dead queue
+                                    let dead_key: RedisKey = Keys::dead(queue).into();
+                                    if let Err(e) = redis
+                                        .lpush(dead_key, dependent_id.as_str().into())
+                                        .await
+                                    {
+                                        tracing::error!(
+                                            "Failed to add dependent task {} to dead queue: {}",
+                                            dependent_id_str,
+                                            e
+                                        );
+                                        continue;
+                                    }
+
+                                    tracing::info!(
+                                        "Dependent task {} moved to dead queue due to failed dependency {}",
+                                        dependent_id_str,
+                                        failed_task_id
+                                    );
+                                    failed_count += 1;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to serialize dependent task {}: {}",
+                                        dependent_id_str,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to deserialize dependent task {}: {}",
+                                dependent_id_str,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+            None => {
+                tracing::warn!("Dependent task {} data not found, skipping", dependent_id_str);
+            }
+        }
+
+        // Clean up pending dependencies for this dependent task
+        let pending_deps_key: RedisKey = Keys::pending_deps(dependent_id_str).into();
+        let _ = redis.del(vec![pending_deps_key]).await;
+    }
+
+    // Clean up the task deps key for the failed task
+    let _ = redis.del(vec![task_deps_key]).await;
+
+    Ok(failed_count)
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ include = [
 # Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
 
 # Redis client
 fred = { workspace = true }
@@ -42,7 +43,7 @@ cron = { workspace = true }
 once_cell = "1.19"
 
 # Macros
-rediq-macros = { version = "0.2.1", path = "../rediq-macros", optional = true }
+rediq-macros = { version = "0.2.2", path = "../rediq-macros", optional = true }
 
 # Observability
 tracing = { workspace = true }

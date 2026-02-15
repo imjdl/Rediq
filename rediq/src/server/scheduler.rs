@@ -183,14 +183,22 @@ impl Scheduler {
                     self.redis.zrem(cron_key.clone(), task_id.as_str().into()).await?;
 
                     // Create a new task instance (without cron expression, with regular delay)
-                    let new_task = Task::builder(cron_task.task_type.clone())
+                    let new_task = match Task::builder(cron_task.task_type.clone())
                         .queue(queue.clone())
                         .max_retry(cron_task.options.max_retry)
                         .timeout(cron_task.options.timeout)
                         .priority(cron_task.options.priority)
                         .raw_payload(cron_task.payload.clone())
                         .build()
-                        .unwrap();
+                    {
+                        Ok(task) => task,
+                        Err(e) => {
+                            tracing::error!("Failed to create cron task instance for {}: {}", task_id, e);
+                            // Re-schedule for 60 seconds later to retry
+                            self.redis.zadd(cron_key.clone(), task_id.as_str().into(), now + 60).await?;
+                            continue;
+                        }
+                    };
 
                     // Store the new task
                     let new_task_key: RedisKey = Keys::task(&new_task.id).into();
