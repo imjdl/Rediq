@@ -14,8 +14,8 @@ use syn::{parse_macro_input, ItemFn, LitStr, Token};
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use rediq::{Task, Result};
+/// ```rust,ignore
+/// use rediq::{Task, Result, processor::Mux};
 /// use rediq_macros::task_handler;
 ///
 /// #[task_handler]
@@ -25,7 +25,7 @@ use syn::{parse_macro_input, ItemFn, LitStr, Token};
 /// }
 ///
 /// // Later, register the handler:
-/// let mut mux = rediq::processor::Mux::new();
+/// let mut mux = Mux::new();
 /// mux.handle("email:send", send_email);
 /// ```
 #[proc_macro_attribute]
@@ -35,14 +35,13 @@ pub fn task_handler(_args: TokenStream, input: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let fn_vis = &input_fn.vis;
     let fn_attrs = &input_fn.attrs;
-    let fn_inputs = &input_fn.sig.inputs;
-    let fn_output = &input_fn.sig.output;
     let fn_block = &input_fn.block;
+    let fn_sig = &input_fn.sig;
 
     // Validate function signature
     if input_fn.sig.asyncness.is_none() {
         return syn::Error::new_spanned(
-            &input_fn.sig.fn_token,
+            input_fn.sig.fn_token,
             "task handler must be an async function",
         )
         .to_compile_error()
@@ -54,7 +53,7 @@ pub fn task_handler(_args: TokenStream, input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #(#fn_attrs)*
-        #fn_vis fn #fn_name #fn_inputs #fn_output {
+        #fn_vis #fn_sig {
             #fn_block
         }
 
@@ -102,17 +101,17 @@ pub fn task_handler(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use rediq::{Mux, Result};
+/// ```rust,ignore
+/// use rediq::{processor::Mux, Task, Result};
 /// use rediq_macros::{register_handlers, task_handler};
 ///
 /// #[task_handler]
-/// async fn send_email(task: &rediq::Task) -> Result<()> {
+/// async fn send_email(task: &Task) -> Result<()> {
 ///     Ok(())
 /// }
 ///
 /// #[task_handler]
-/// async fn send_sms(task: &rediq::Task) -> Result<()> {
+/// async fn send_sms(task: &Task) -> Result<()> {
 ///     Ok(())
 /// }
 ///
@@ -175,14 +174,16 @@ pub fn register_handlers(input: TokenStream) -> TokenStream {
 
 /// Helper macro to create a handler from an async function inline
 ///
-/// This is useful when you don't want to use the attribute macro.
+/// This macro returns the Wrapper struct for a function that was
+/// previously decorated with `#[task_handler]`.
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use rediq::{Mux, Task, Result};
-/// use rediq_macros::handler_fn;
+/// ```rust,ignore
+/// use rediq::{processor::Mux, Task, Result};
+/// use rediq_macros::{task_handler, handler_fn};
 ///
+/// #[task_handler]
 /// async fn my_handler(task: &Task) -> Result<()> {
 ///     Ok(())
 /// }
@@ -209,8 +210,8 @@ pub fn handler_fn(input: TokenStream) -> TokenStream {
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use rediq::{Mux, Task, Result};
+/// ```rust,ignore
+/// use rediq::{processor::Mux, Task, Result};
 /// use rediq_macros::def_handler;
 ///
 /// let mut mux = Mux::new();

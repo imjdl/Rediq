@@ -475,13 +475,10 @@ async fn handle_task_list_input(
 }
 
 fn handle_help_input(state: &mut DashboardState) {
-    match state.view_mode {
-        ViewMode::Help => {
-            // Close help on Esc, q, or ?
-            state.show_help = false;
-            state.view_mode = ViewMode::Main;
-        }
-        _ => {}
+    if state.view_mode == ViewMode::Help {
+        // Close help on Esc, q, or ?
+        state.show_help = false;
+        state.view_mode = ViewMode::Main;
     }
 }
 
@@ -1026,7 +1023,7 @@ fn draw_queues_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     )
     .block(Block::default().title(title).borders(Borders::ALL))
-    .widths(&[
+    .widths([
         Constraint::Percentage(23),
         Constraint::Percentage(13),
         Constraint::Percentage(13),
@@ -1083,7 +1080,7 @@ fn draw_workers_panel(f: &mut Frame, state: &DashboardState, area: Rect) {
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     )
     .block(Block::default().title(title).borders(Borders::ALL))
-    .widths(&[
+    .widths([
         Constraint::Percentage(30),
         Constraint::Percentage(30),
         Constraint::Percentage(20),
@@ -1275,7 +1272,7 @@ fn draw_task_list_overlay(f: &mut Frame, state: &DashboardState, area: Rect) {
                 .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         )
         .block(Block::default().title(title).borders(Borders::ALL))
-        .widths(&[
+        .widths([
             Constraint::Percentage(18),
             Constraint::Percentage(30),
             Constraint::Percentage(12),

@@ -100,13 +100,16 @@ async fn test_priority_ordering() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    let processed = processed_ref.lock().unwrap();
-    // Higher priority task should be processed first
-    if processed.len() >= 2 {
-        eprintln!("Processed tasks in order: {:?}", processed);
-        eprintln!("Expected: id_high={}, id_low={}", id_high, id_low);
-        assert_eq!(processed[0], id_high, "High priority task should be processed first");
-        assert_eq!(processed[1], id_low, "Low priority task should be processed second");
+    // Check processed order in a separate block to release lock before await
+    {
+        let processed = processed_ref.lock().unwrap();
+        // Higher priority task should be processed first
+        if processed.len() >= 2 {
+            eprintln!("Processed tasks in order: {:?}", processed);
+            eprintln!("Expected: id_high={}, id_low={}", id_high, id_low);
+            assert_eq!(processed[0], id_high, "High priority task should be processed first");
+            assert_eq!(processed[1], id_low, "Low priority task should be processed second");
+        }
     }
 
     server_handle.abort();

@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_progress_context_none_initially() {
-        assert!(!get_progress_context().is_some());
+        assert!(get_progress_context().is_none());
     }
 
     #[test]

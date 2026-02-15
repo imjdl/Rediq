@@ -109,7 +109,7 @@ async fn test_bulk_task_inspection() {
     }
 
     // Inspect each task
-    for (_i, task_id) in task_ids.iter().enumerate() {
+    for task_id in task_ids.iter() {
         let task_info = client.inspector().get_task(task_id).await.unwrap();
         assert_eq!(task_info.id, *task_id);
         assert_eq!(task_info.task_type, "test:inspect");

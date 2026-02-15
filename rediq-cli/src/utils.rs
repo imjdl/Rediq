@@ -99,7 +99,7 @@ fn parse_host_port_db(s: &str, host: &mut String, port: &mut u16, db: &mut i64) 
 
     // Parse host:port
     if let Some(colon_pos) = addr_part.rfind(':') {
-        if let Some(parsed_port) = addr_part[colon_pos + 1..].parse::<u16>().ok() {
+        if let Ok(parsed_port) = addr_part[colon_pos + 1..].parse::<u16>() {
             *port = parsed_port;
             *host = addr_part[..colon_pos].to_string();
         } else {
@@ -111,7 +111,7 @@ fn parse_host_port_db(s: &str, host: &mut String, port: &mut u16, db: &mut i64) 
 
     // Parse database number
     if parts.len() > 1 {
-        if let Some(parsed_db) = parts[1].parse::<i64>().ok() {
+        if let Ok(parsed_db) = parts[1].parse::<i64>() {
             *db = parsed_db;
         }
     }
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_shorten_id() {
         let long_id = "abc123def456ghi789jkl012mno345pqr678stu901vwx234yz";
-        let shortened = shorten_id(&long_id, 20);
+        let shortened = shorten_id(long_id, 20);
         assert!(shortened.starts_with("..."));
         assert!(shortened.ends_with("vwx234yz"));
         assert!(shortened.len() <= 20);

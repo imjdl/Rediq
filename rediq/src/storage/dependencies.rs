@@ -275,12 +275,3 @@ pub async fn fail_dependents(redis: &RedisClient, failed_task_id: &str, queue: &
 
     Ok(failed_count)
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_module_exists() {
-        // This test just verifies the module compiles
-        assert!(true);
-    }
-}

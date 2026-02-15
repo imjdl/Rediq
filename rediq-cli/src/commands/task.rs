@@ -182,11 +182,8 @@ mod tests {
         let action = TaskAction::Inspect {
             id: "test-task-id".to_string(),
         };
-        match action {
-            TaskAction::Inspect { id } => {
-                assert_eq!(id, "test-task-id");
-            }
-            _ => {}
+        if let TaskAction::Inspect { id } = action {
+            assert_eq!(id, "test-task-id");
         }
     }
 }

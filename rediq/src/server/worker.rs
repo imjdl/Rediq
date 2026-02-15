@@ -485,7 +485,7 @@ impl Worker {
         ).await?;
 
         // Update TTL
-        let task_ttl = crate::config::get_task_ttl() as u64;
+        let task_ttl = crate::config::get_task_ttl();
         self.state.redis.expire(task_key, task_ttl).await?;
 
         // Update worker processed_total on successful completion

@@ -124,7 +124,8 @@ async fn test_middleware_error_handling() {
         .unwrap_or_else(|_| "redis://localhost:6379".to_string());
     let queue_name = format!("test-mw-error-{}", uuid::Uuid::new_v4());
 
-    // Error-raising middleware
+    // Error-raising middleware (currently unused but kept for future test expansion)
+    #[allow(dead_code)]
     struct ErrorMiddleware;
 
     #[async_trait]

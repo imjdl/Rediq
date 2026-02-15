@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Type alias for the aggregator function
+type AggregatorFn = Arc<dyn Fn(&str, Vec<Task>) -> Result<Option<Task>> + Send + Sync>;
+
 /// Configuration for task aggregation
 #[derive(Debug, Clone)]
 pub struct AggregatorConfig {
@@ -79,7 +82,7 @@ pub trait Aggregator: Send + Sync {
 /// A simple aggregator that uses a closure to define aggregation logic.
 pub struct GroupAggregatorFunc {
     config: AggregatorConfig,
-    f: Arc<dyn Fn(&str, Vec<Task>) -> Result<Option<Task>> + Send + Sync>,
+    f: AggregatorFn,
 }
 
 impl GroupAggregatorFunc {

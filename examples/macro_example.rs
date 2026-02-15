@@ -6,7 +6,7 @@
 //! ```
 
 use rediq::client::Client;
-use rediq::{processor::Mux, Result, server::{Server, ServerBuilder}, Task};
+use rediq::{Result, server::{Server, ServerBuilder}, Task};
 use rediq_macros::{register_handlers, task_handler};
 
 // Define handlers using the #[task_handler] attribute macro

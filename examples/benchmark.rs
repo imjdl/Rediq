@@ -299,12 +299,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Successfully:       {}", final_processed);
 
     // Calculate failed count with proper handling
-    let failed = if final_processed <= args.tasks as u64 {
-        args.tasks as u64 - final_processed
-    } else {
-        // Processed more than enqueued (shouldn't happen, but handle gracefully)
-        0
-    };
+    let failed = (args.tasks as u64).saturating_sub(final_processed);
     println!("  Failed:             {}", failed);
     println!();
     println!("  Enqueue time:       {:.2}s", enqueue_duration.as_secs_f64());
@@ -317,7 +312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Calculate percentiles if we had timing data
-    println!("  Avg latency:        ~{}ms", args.task_duration + process_duration.as_millis() as u64 / final_processed.max(1) as u64);
+    println!("  Avg latency:        ~{}ms", args.task_duration + process_duration.as_millis() as u64 / final_processed.max(1));
     println!();
 
     // ===== PER-QUEUE STATISTICS =====

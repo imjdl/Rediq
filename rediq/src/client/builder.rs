@@ -9,6 +9,9 @@ use chrono::Utc;
 use fred::prelude::{RedisKey, RedisValue};
 use rmp_serde;
 
+/// Type alias for queue check function tuple
+type QueueCheckFn = (fn(&str) -> String, &'static str, bool);
+
 /// Client configuration
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -70,7 +73,7 @@ impl Client {
             ],
         ).await?;
         // Set TTL on task details
-        let task_ttl = config::get_task_ttl() as u64;
+        let task_ttl = config::get_task_ttl();
         self.redis.expire(task_key, task_ttl).await?;
 
         // Handle dependencies - if task has dependencies, don't enqueue to main queue yet
@@ -143,7 +146,7 @@ impl Client {
                 ("queue".into(), queue.as_str().into()),
             ],
         ).await?;
-        let task_ttl = config::get_task_ttl() as u64;
+        let task_ttl = config::get_task_ttl();
         self.redis.expire(task_key, task_ttl).await?;
 
         // Add to delayed queue
@@ -191,7 +194,7 @@ impl Client {
                 ("queue".into(), queue.as_str().into()),
             ],
         ).await?;
-        let task_ttl = config::get_task_ttl() as u64;
+        let task_ttl = config::get_task_ttl();
         self.redis.expire(task_key, task_ttl).await?;
 
         // Add to priority queue (ZSet with priority as score)
@@ -248,7 +251,7 @@ impl Client {
                 ("queue".into(), queue.as_str().into()),
             ],
         ).await?;
-        let task_ttl = config::get_task_ttl() as u64;
+        let task_ttl = config::get_task_ttl();
         self.redis.expire(task_key, task_ttl).await?;
 
         // Add to cron queue (score = next scheduled time)
@@ -274,7 +277,7 @@ impl Client {
 
         let mut task_ids = Vec::with_capacity(tasks.len());
         let mut registered_queues = std::collections::HashSet::new();
-        let task_ttl = config::get_task_ttl() as u64;
+        let task_ttl = config::get_task_ttl();
 
         // Create pipeline for batch operations
         let mut pipeline = self.redis.pipeline();
@@ -372,7 +375,7 @@ impl Client {
 
         // Define all possible queue types to check
         // Each tuple contains (queue_key_function, status_name, is_sorted_set)
-        let queue_checks: Vec<(fn(&str) -> String, &str, bool)> = vec![
+        let queue_checks: Vec<QueueCheckFn> = vec![
             (Keys::queue, "pending", false),
             (Keys::active, "active", false),
             (Keys::delayed, "delayed", true),
@@ -524,7 +527,7 @@ impl Client {
                 ("queue".into(), RedisValue::Bytes(queue_name.to_string().into_bytes().into())),
             ],
         ).await?;
-        let task_ttl = config::get_task_ttl() as u64;
+        let task_ttl = config::get_task_ttl();
         self.redis.expire(task_key, task_ttl).await?;
 
         // Remove from dead queue
