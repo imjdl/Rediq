@@ -48,7 +48,7 @@ async fn test_cron_task_scheduling() {
         .build()
         .expect("Failed to build cron task");
 
-    let task_id = client.enqueue(cron_task).await.expect("Failed to enqueue cron task");
+    let task_id = client.enqueue_cron(cron_task).await.expect("Failed to enqueue cron task");
     eprintln!("Cron task enqueued: {}", task_id);
 
     // Verify cron task can be retrieved
@@ -111,7 +111,7 @@ async fn test_cron_task_registration() {
             .build()
             .expect("Failed to build cron task");
 
-        let task_id = client.enqueue(cron_task).await.expect("Failed to enqueue cron task");
+        let task_id = client.enqueue_cron(cron_task).await.expect("Failed to enqueue cron task");
         task_ids.push(task_id);
     }
 

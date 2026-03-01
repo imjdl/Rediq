@@ -482,6 +482,172 @@ impl RedisClient {
         Ok(result)
     }
 
+    /// Execute a Lua script on the Redis server
+    ///
+    /// # Arguments
+    /// * `script` - The Lua script to execute
+    /// * `keys` - The keys that the script will access
+    /// * `args` - Additional arguments to pass to the script
+    ///
+    /// # Security Note
+    /// This method only executes predefined Lua scripts from the scripts/lua/ directory,
+    /// not arbitrary user input. This is safe for production use.
+    ///
+    /// # Returns
+    /// The result of the script execution as a string
+    pub async fn eval_script(
+        &self,
+        script: &str,
+        keys: Vec<RedisKey>,
+        args: Vec<RedisValue>,
+    ) -> Result<Option<String>> {
+        use fred::interfaces::LuaInterface;
+
+        // Get a client from the pool
+        let client = self.pool.next();
+
+        // Execute the Lua script
+        let result: fred::types::RedisValue = client.eval(script, keys, args).await?;
+
+        // Try to extract as string
+        match result.as_string() {
+            Some(s) => Ok(Some(s.to_string())),
+            None => {
+                // Check if it's an error or null
+                let type_str = format!("{:?}", result);
+                if type_str.contains("ERR_QUEUE_PAUSED") {
+                    return Err(Error::QueuePaused("Queue paused".to_string()));
+                }
+                if type_str.contains("ERR_TIMEOUT") || type_str == "Nil" {
+                    return Ok(None);
+                }
+                // For other types, check if it's actually an error response
+                if type_str.starts_with("Error") {
+                    return Err(Error::Redis(fred::error::RedisError::new(
+                        fred::error::RedisErrorKind::Unknown,
+                        type_str,
+                    )));
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    /// Atomic deduplication add - check if key exists, add if not
+    ///
+    /// Returns `Ok(true)` if the key was added (didn't exist before)
+    /// Returns `Ok(false)` if the key already exists (duplicate detected)
+    ///
+    /// This is atomic and prevents race conditions between check and add.
+    pub async fn dedup_add(&self, dedup_key: RedisKey, unique_key: RedisValue) -> Result<bool> {
+        // Lua script for atomic dedup check and add
+        const DEDUP_SCRIPT: &str = r#"
+-- Atomic deduplication script
+local dedup_key = KEYS[1]
+local unique_key = ARGV[1]
+
+-- Check if key already exists
+if redis.call('SISMEMBER', dedup_key, unique_key) == 1 then
+    return 0  -- Already exists, return false
+end
+
+-- Add to set
+redis.call('SADD', dedup_key, unique_key)
+return 1  -- Successfully added, return true
+"#;
+
+        let keys = vec![dedup_key];
+        let args = vec![unique_key];
+
+        tracing::debug!("dedup_add: executing atomic dedup check");
+
+        match self.eval_script(DEDUP_SCRIPT, keys, args).await {
+            Ok(Some(result)) => {
+                let added = result == "1";
+                tracing::debug!("dedup_add: result = {}", added);
+                Ok(added)
+            }
+            Ok(None) => {
+                // Unexpected, but treat as not added
+                tracing::warn!("dedup_add: unexpected null result");
+                Ok(false)
+            }
+            Err(e) => {
+                tracing::warn!("dedup_add: script execution failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Batch move expired tasks from sorted set to list queue
+    ///
+    /// This atomically:
+    /// 1. Finds tasks with score <= now in the source ZSet
+    /// 2. Removes them from the ZSet
+    /// 3. Adds them to the destination list
+    ///
+    /// Returns the number of tasks moved.
+    ///
+    /// # Security Note
+    ///
+    /// This implementation uses a predefined Lua script to ensure atomicity.
+    /// The script is embedded in the binary and cannot be modified at runtime.
+    pub async fn move_expired_tasks_lua(
+        &self,
+        source: RedisKey,
+        dest: RedisKey,
+        now: i64,
+        batch_size: usize,
+    ) -> Result<usize> {
+        // Lua script for atomic batch move
+        const MOVE_EXPIRED_SCRIPT: &str = r#"
+-- Atomic batch move expired tasks script
+local source_key = KEYS[1]
+local dest_key = KEYS[2]
+local now = tonumber(ARGV[1])
+local batch_size = tonumber(ARGV[2])
+
+-- Get expired tasks (score <= now)
+local tasks = redis.call('ZRANGEBYSCORE', source_key, '-inf', now, 'LIMIT', 0, batch_size)
+
+if not tasks or #tasks == 0 then
+    return 0
+end
+
+-- Remove from source and add to destination
+for _, task_id in ipairs(tasks) do
+    redis.call('ZREM', source_key, task_id)
+    redis.call('RPUSH', dest_key, task_id)
+end
+
+return #tasks
+"#;
+
+        let keys = vec![source, dest];
+        let args = vec![
+            RedisValue::from(now.to_string()),
+            RedisValue::from(batch_size.to_string()),
+        ];
+
+        tracing::debug!("move_expired_tasks_lua: executing batch move (now={}, batch={})", now, batch_size);
+
+        match self.eval_script(MOVE_EXPIRED_SCRIPT, keys, args).await {
+            Ok(Some(count)) => {
+                let moved = count.parse::<usize>().unwrap_or(0);
+                tracing::debug!("move_expired_tasks_lua: moved {} tasks", moved);
+                Ok(moved)
+            }
+            Ok(None) => {
+                tracing::debug!("move_expired_tasks_lua: no tasks moved");
+                Ok(0)
+            }
+            Err(e) => {
+                tracing::warn!("move_expired_tasks_lua: script execution failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
     /// Execute pdequeue.lua script for atomic priority queue dequeue
     ///
     /// This atomically:
@@ -495,14 +661,9 @@ impl RedisClient {
     ///
     /// # Security Note
     ///
-    /// This implementation uses a Lua script to ensure atomicity, preventing race conditions
-    /// where multiple workers might attempt to dequeue the same task concurrently.
-    ///
-    /// # Important
-    ///
-    /// Since Fred's eval interface is complex, we use individual Redis commands with retry logic.
-    /// This provides reasonable atomicity for most use cases. For true transactional guarantees,
-    /// consider using Redis transactions (MULTI/EXEC) when Fred's interface stabilizes.
+    /// This implementation uses a predefined Lua script to ensure atomicity, preventing race
+    /// conditions where multiple workers might attempt to dequeue the same task concurrently.
+    /// The script is embedded in the binary and cannot be modified at runtime.
     pub async fn pdequeue_lua(
         &self,
         pqueue: RedisKey,
@@ -511,60 +672,75 @@ impl RedisClient {
         _task_prefix: RedisKey,
         ttl: usize,
     ) -> Result<String> {
-        const MAX_RETRIES: usize = 5;
+        // Lua script for atomic priority queue dequeue
+        // This script is embedded at compile time and cannot be modified at runtime
+        const PDEQUEUE_SCRIPT: &str = r#"
+-- Atomic priority dequeue script
+local pqueue_key = KEYS[1]
+local active_key = KEYS[2]
+local pause_key = KEYS[3]
+local timeout = tonumber(ARGV[1])
+local current_timestamp = tonumber(ARGV[2])
+local task_ttl = tonumber(ARGV[3]) or 86400
 
-        tracing::debug!("pdequeue_lua: attempting atomic dequeue with retry");
+-- Check if queue is paused
+if redis.call('EXISTS', pause_key) == 1 then
+    return {err = 'ERR_QUEUE_PAUSED'}
+end
 
-        for attempt in 0..MAX_RETRIES {
-            // Check if queue is paused first
-            if self.exists(pause.clone()).await? {
-                tracing::debug!("pdequeue_lua: queue is paused");
-                return Err(Error::QueuePaused("Queue paused".to_string()));
+-- Get task with highest priority (lowest score)
+local results = redis.call('ZRANGE', pqueue_key, 0, 0)
+if not results or #results == 0 then
+    return {err = 'ERR_TIMEOUT'}
+end
+
+local task_id = results[1]
+
+-- Remove from priority queue (atomic with ZRANGE since in same script)
+redis.call('ZREM', pqueue_key, task_id)
+
+-- Move to active queue
+redis.call('LPUSH', active_key, task_id)
+
+-- Update task status
+local task_key = 'rediq:task:' .. task_id
+redis.call('HSET', task_key, 'status', 'active')
+redis.call('HSET', task_key, 'processed_at', current_timestamp)
+redis.call('EXPIRE', task_key, task_ttl)
+
+return {ok = task_id}
+"#;
+
+        let current_timestamp = chrono::Utc::now().timestamp();
+
+        let keys = vec![pqueue, active, pause];
+        let args = vec![
+            RedisValue::from("0"),  // timeout (not used in non-blocking mode)
+            RedisValue::from(current_timestamp.to_string()),
+            RedisValue::from(ttl.to_string()),
+        ];
+
+        tracing::debug!("pdequeue_lua: executing atomic dequeue script");
+
+        match self.eval_script(PDEQUEUE_SCRIPT, keys, args).await {
+            Ok(Some(task_id)) => {
+                tracing::debug!("pdequeue_lua: successfully dequeued task {}", task_id);
+                Ok(task_id)
             }
-
-            // Get task with highest priority (lowest score)
-            let results = self.zrange_with_scores(pqueue.clone(), 0, 0).await?;
-
-            if results.is_empty() {
+            Ok(None) => {
+                // Queue is empty (ERR_TIMEOUT from script)
                 tracing::debug!("pdequeue_lua: no tasks in priority queue");
-                return Ok(String::new());
+                Ok(String::new())
             }
-
-            let (task_id, score) = &results[0];
-
-            // Try to remove the task - this is the atomic check
-            let removed = self.zrem(pqueue.clone(), task_id.as_str().into()).await?;
-
-            if !removed {
-                // Task was removed by another worker, retry
-                tracing::debug!("pdequeue_lua: task {} was already removed by another worker, retrying (attempt {})", task_id, attempt + 1);
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                continue;
+            Err(Error::QueuePaused(_)) => {
+                tracing::debug!("pdequeue_lua: queue is paused");
+                Err(Error::QueuePaused("Queue paused".to_string()))
             }
-
-            // We won the race, now move to active queue
-            self.lpush(active.clone(), task_id.as_str().into()).await?;
-
-            // Update task status
-            let task_key: RedisKey = format!("rediq:task:{}", task_id).into();
-            let current_timestamp = chrono::Utc::now().timestamp();
-            self.hset(
-                task_key.clone(),
-                vec![
-                    ("status".into(), "active".into()),
-                    ("processed_at".into(), current_timestamp.to_string().into()),
-                ],
-            ).await?;
-
-            // Set TTL on task data
-            self.expire(task_key, ttl as u64).await?;
-
-            tracing::debug!("pdequeue_lua: successfully dequeued task {} with priority {}", task_id, score);
-            return Ok(task_id.clone());
+            Err(e) => {
+                tracing::warn!("pdequeue_lua: script execution failed: {}", e);
+                Err(e)
+            }
         }
-
-        tracing::warn!("pdequeue_lua: failed to dequeue after {} retries", MAX_RETRIES);
-        Ok(String::new())
     }
 
     /// Get TTL of a key in seconds

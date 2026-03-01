@@ -7,6 +7,9 @@ use crate::{Error, Result, Task};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod context;
+pub use context::HandlerContext;
+
 /// Handler trait - Task processor
 ///
 /// Implement this trait to define how tasks are processed.
@@ -29,14 +32,61 @@ use std::sync::Arc;
 ///     }
 /// }
 /// ```
+///
+/// # With Context
+///
+/// For handlers that need access to Redis, progress reporting, or cancellation:
+///
+/// ```rust
+/// use rediq::processor::{Handler, HandlerContext};
+/// use rediq::Task;
+/// use async_trait::async_trait;
+///
+/// struct AdvancedHandler;
+///
+/// #[async_trait]
+/// impl Handler for AdvancedHandler {
+///     async fn handle_with_context(&self, task: &Task, ctx: &HandlerContext) -> rediq::Result<()> {
+///         // Report progress
+///         ctx.report_progress(50).await?;
+///
+///         // Check cancellation
+///         if ctx.is_cancelled() {
+///             return Err(rediq::Error::Cancelled("Task cancelled".into()));
+///         }
+///
+///         Ok(())
+///     }
+///
+///     // Default implementation delegates to handle_with_context
+/// }
+/// ```
 #[async_trait]
 pub trait Handler: Send + Sync {
-    /// Handle a task
+    /// Handle a task (legacy method without context)
     ///
     /// This method is called when a task of the registered type is dequeued.
     /// Return `Ok(())` if the task was processed successfully.
     /// Return an error if the task failed and should be retried.
-    async fn handle(&self, task: &Task) -> Result<()>;
+    ///
+    /// **Note**: If you need access to Redis, progress, or cancellation,
+    /// implement `handle_with_context` instead.
+    async fn handle(&self, task: &Task) -> Result<()> {
+        // Default implementation - should be overridden
+        Err(Error::Handler("Handler::handle not implemented".into()))
+    }
+
+    /// Handle a task with context
+    ///
+    /// This method provides access to:
+    /// - Redis client for additional operations
+    /// - Progress reporting
+    /// - Cancellation state
+    ///
+    /// The default implementation delegates to `handle()` for backward compatibility.
+    async fn handle_with_context(&self, task: &Task, _ctx: &HandlerContext) -> Result<()> {
+        self.handle(task).await
+    }
 }
 
 /// Multiplexer - Routes tasks to their registered handlers
@@ -137,6 +187,23 @@ impl Mux {
             })?;
 
         handler.handle(task).await
+    }
+
+    /// Process a task with context by routing it to the appropriate handler
+    ///
+    /// This method looks up the handler based on the task's type and invokes it
+    /// with the provided context.
+    /// If no handler is found and no default handler is set, it returns an error.
+    pub async fn process_with_context(&self, task: &Task, ctx: &HandlerContext) -> Result<()> {
+        let handler = self
+            .handlers
+            .get(&task.task_type)
+            .or(self.default_handler.as_ref())
+            .ok_or_else(|| {
+                Error::Handler(format!("No handler found for task_type: {}", task.task_type))
+            })?;
+
+        handler.handle_with_context(task, ctx).await
     }
 
     /// Check if a handler exists for the given task type

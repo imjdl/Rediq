@@ -17,7 +17,7 @@ async-trait = "0.1"
 futures = "0.3"
 
 # Redis client
-fred = { version = "9.0", features = ["enable-rustls", "partial-tracing", "i-keys"] }
+fred = { version = "9.0", features = ["enable-rustls", "partial-tracing", "i-keys", "i-scripts"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

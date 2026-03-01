@@ -8,7 +8,7 @@ use crate::{
     task::TaskStatus,
     progress::{ProgressContext, ProgressConfig},
 };
-use crate::processor::Mux;
+use crate::processor::{Mux, HandlerContext};
 use crate::server::config::ServerState;
 use crate::task::progress_ext::set_progress_context;
 use chrono::Utc;
@@ -402,6 +402,15 @@ impl Worker {
         // Initialize progress to 0
         let _ = progress_ctx.report(0).await;
 
+        // Create handler context
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let handler_ctx = HandlerContext::new(
+            task.id.clone(),
+            self.state.redis.clone(),
+            Some(progress_ctx.clone()),
+            cancelled.clone(),
+        );
+
         // Execute middleware before hooks
         if !self.state.middleware.is_empty() {
             self.state.middleware.before(&task).await?;
@@ -409,7 +418,7 @@ impl Worker {
 
         // Get handler and process with timeout
         let mux = self.mux.lock().await;
-        let handler = mux.process(&task);
+        let handler = mux.process_with_context(&task, &handler_ctx);
 
         // Apply timeout
         let result = tokio::time::timeout(task.options.timeout, handler).await;

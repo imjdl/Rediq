@@ -155,6 +155,18 @@ impl Task {
             return Err(Error::Validation("timeout must be greater than 0".into()));
         }
 
+        // Validate delay (max 1 year to prevent timestamp overflow)
+        if let Some(delay) = self.options.delay {
+            const MAX_DELAY_SECS: u64 = 365 * 24 * 60 * 60; // 1 year in seconds
+            if delay.as_secs() > MAX_DELAY_SECS {
+                return Err(Error::Validation(format!(
+                    "delay cannot exceed {} seconds (1 year), got {} seconds",
+                    MAX_DELAY_SECS,
+                    delay.as_secs()
+                )));
+            }
+        }
+
         // Validate cron expression (simple validation)
         if let Some(cron) = &self.options.cron {
             if !cron.contains(' ') && cron != "@always" {

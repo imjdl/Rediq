@@ -101,10 +101,30 @@ impl Client {
         let queues_key: RedisKey = Keys::meta_queues().into();
         self.redis.sadd(queues_key, queue.as_str().into()).await?;
 
-        // Handle deduplication
+        // Handle deduplication with atomic check
         if let Some(key) = unique_key {
             let dedup_key: RedisKey = Keys::dedup(&queue).into();
-            self.redis.sadd(dedup_key, key.into()).await?;
+            let added = self.redis.dedup_add(dedup_key, key.clone().into()).await?;
+            if !added {
+                return Err(Error::Validation(format!(
+                    "duplicate task detected: unique key '{}' already exists in queue '{}'",
+                    key, queue
+                )));
+            }
+        }
+
+        // Handle task grouping for aggregation
+        if let Some(ref group) = task.options.group {
+            let now = chrono::Utc::now().timestamp();
+            let group_key: RedisKey = Keys::group(group).into();
+            self.redis.zadd(group_key, task_id.as_str().into(), now).await?;
+
+            // Update group metadata
+            let meta_group_key: RedisKey = Keys::meta_group(group).into();
+            self.redis.hincrby(meta_group_key.clone(), "count".into(), 1).await?;
+
+            tracing::debug!("Task {} added to group {} for aggregation", task_id, group);
+            return Ok(task_id);
         }
 
         // Check if task has non-default priority (default is 50)
@@ -132,7 +152,7 @@ impl Client {
             "Delay must be set for delayed tasks".into(),
         ))?;
 
-        let execute_at = Utc::now().timestamp() + delay.as_secs() as i64;
+        let execute_at = Utc::now().timestamp().saturating_add(delay.as_secs() as i64);
 
         // Serialize and store task
         let task_data = rmp_serde::to_vec(&task)
@@ -201,10 +221,16 @@ impl Client {
         let pqueue_key: RedisKey = Keys::priority_queue(&queue).into();
         self.redis.zadd(pqueue_key, task_id.as_str().into(), priority as i64).await?;
 
-        // Handle deduplication
+        // Handle deduplication with atomic check
         if let Some(key) = unique_key {
             let dedup_key: RedisKey = Keys::dedup(&queue).into();
-            self.redis.sadd(dedup_key, key.into()).await?;
+            let added = self.redis.dedup_add(dedup_key, key.clone().into()).await?;
+            if !added {
+                return Err(Error::Validation(format!(
+                    "duplicate task detected: unique key '{}' already exists in queue '{}'",
+                    key, queue
+                )));
+            }
         }
 
         // Register queue

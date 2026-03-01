@@ -5,7 +5,7 @@
 use crate::{Error, Result};
 use crate::storage::{PoolConfig, RedisClient, RedisMode};
 use crate::middleware::MiddlewareChain;
-use crate::aggregator::AggregatorConfig;
+use crate::aggregator::{AggregatorConfig, AggregatorManager};
 use crate::server::JanitorConfig;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -403,10 +403,17 @@ impl ServerBuilder {
         };
         tracing::info!("Connected to Redis ({}) at {}", mode_str, self.config.redis_url);
 
+        // Create aggregator manager
+        let mut aggregator_manager = AggregatorManager::new();
+        if let Some(ref agg_config) = self.config.aggregator_config {
+            aggregator_manager.set_default_config(agg_config.clone());
+        }
+
         Ok(ServerState {
             config: Arc::new(self.config),
             redis,
             middleware: Arc::new(self.middleware),
+            aggregator: Arc::new(aggregator_manager),
         })
     }
 }
@@ -425,6 +432,9 @@ pub struct ServerState {
 
     /// Middleware chain
     pub middleware: Arc<MiddlewareChain>,
+
+    /// Aggregator manager for task grouping
+    pub aggregator: Arc<AggregatorManager>,
 }
 
 #[cfg(test)]
