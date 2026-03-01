@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-03-01
+
+### Fixed
+- **P0**: Removed obsolete empty `scheduler/` directory
+- **P0**: Fixed cron tests to use `enqueue_cron()` instead of `enqueue()`
+- **P1**: Added timestamp overflow protection in `Task::validate()` (max 1 year delay)
+- **P1**: Used `saturating_add` for timestamp calculations in `enqueue_delayed()`
+- **P1**: Added atomic deduplication check with `dedup_add()` Lua script
+- **P1**: Optimized scheduler N+1 queries with `move_expired_tasks_lua()` batch script
+
+### Added
+- **HandlerContext**: New context struct providing Redis access, progress reporting, and cancellation state
+- **Handler trait extension**: Added `handle_with_context()` method (backward compatible with default impl)
+- **Aggregator integration**: ServerState now includes AggregatorManager, Scheduler checks for aggregation
+- **Group support in enqueue**: Tasks with `group` option are stored in group ZSet for batch processing
+
+### Changed
+- Improved metrics `new_or_default()` error handling with better documentation
+- Added `i-scripts` feature to `fred` dependency for Lua script support
+
+[0.2.4]: https://github.com/imjdl/rediq/releases/tag/v0.2.4
+
 ## [0.2.3] - 2026-02-15
 
 ### Fixed
